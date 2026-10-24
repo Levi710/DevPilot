@@ -304,19 +304,102 @@ def score_report(case, report):
         answer,
     )
 
-    passed = (
+    analysis_passed = (
         term_coverage >= 0.75
         and evidence_coverage == 1.0
         and not contradictory_diagnosis
         and root_cause_result["passed"]
     )
 
+    verification = report.get("verification") if isinstance(report, dict) else None
+    reproduction_confirmed = False
+    reproduction_resolved = False
+    fix_verified = False
+    regression_suite_passed = None
+    verification_status = "unverified"
+    timeout_enforced = False
+    dependency_classified = False
+    false_positive_rejected = False
+
+    if isinstance(verification, dict):
+        reproduction_confirmed = bool(
+            verification.get("reproduction_confirmed", verification.get("pre_fix", {}).get("reproduced"))
+        )
+        reproduction_resolved = bool(
+            verification.get("reproduction_resolved", verification.get("valid"))
+        )
+        regression_suite_passed = verification.get("regression_suite_passed")
+        # fix_verified strictly requires reproduction resolved AND no regression failures
+        fix_verified = bool(
+            verification.get("fix_verified")
+            if "fix_verified" in verification
+            else (reproduction_confirmed and reproduction_resolved and (regression_suite_passed is not False))
+        )
+        if regression_suite_passed is False:
+            fix_verified = False
+
+        verification_status = verification.get("verification_status", "unverified")
+        timeout_enforced = bool(verification.get("timeout_enforced", verification.get("timed_out")))
+        dependency_classified = bool(verification.get("dependency_classified", verification.get("rule_violation") == "import_error"))
+        false_positive_rejected = bool(not reproduction_confirmed and case.get("category") == "false_positive_rejection")
+    else:
+        # Check evidence for tool calls if raw evidence objects are present
+        for item in (report.get("evidence") or []):
+            if isinstance(item, dict):
+                if item.get("tool") == "run_reproduction_test" and item.get("status") == "success":
+                    try:
+                        res_obj = json.loads(item.get("result", "{}"))
+                        if res_obj.get("reproduced"):
+                            reproduction_confirmed = True
+                        if res_obj.get("timed_out"):
+                            timeout_enforced = True
+                        if res_obj.get("rule_violation") == "import_error":
+                            dependency_classified = True
+                    except Exception:
+                        pass
+                if item.get("tool") == "validate_patch" and item.get("status") == "success":
+                    try:
+                        res_obj = json.loads(item.get("result", "{}"))
+                        reproduction_resolved = bool(res_obj.get("reproduction_resolved", res_obj.get("valid")))
+                        if "regression_suite_passed" in res_obj:
+                            regression_suite_passed = res_obj["regression_suite_passed"]
+                        if res_obj.get("verification_status"):
+                            verification_status = res_obj["verification_status"]
+                        fix_verified = bool(
+                            res_obj.get("fix_verified")
+                            if "fix_verified" in res_obj
+                            else (reproduction_confirmed and reproduction_resolved and (regression_suite_passed is not False))
+                        )
+                        if regression_suite_passed is False:
+                            fix_verified = False
+                    except Exception:
+                        pass
+
+    category = case.get("category", "reliable_reproduction")
+    if category == "false_positive_rejection":
+        # For bogus bugs, rejection of reproduction is the expected safe behavior
+        false_positive_rejected = not reproduction_confirmed
+
+    false_positive = bool(contradictory_diagnosis)
+
     return {
         "case_id": case["case_id"],
-        "passed": passed,
+        "category": category,
+        "passed": analysis_passed,
+        "analysis_passed": analysis_passed,
         "term_coverage": round(term_coverage, 2),
         "evidence_coverage": round(evidence_coverage, 2),
         "contradictory_diagnosis": contradictory_diagnosis,
+        "reproduction_confirmed": reproduction_confirmed,
+        "reproduction_resolved": reproduction_resolved,
+        "reproduction_success": reproduction_confirmed,
+        "fix_verified": fix_verified,
+        "regression_suite_passed": regression_suite_passed,
+        "verification_status": verification_status,
+        "false_positive": false_positive,
+        "false_positive_rejected": false_positive_rejected,
+        "timeout_enforced": timeout_enforced,
+        "dependency_classified": dependency_classified,
         "root_cause_validation": root_cause_result,
         "matched_terms": matched_terms,
         "missing_terms": missing_terms,
@@ -325,6 +408,39 @@ def score_report(case, report):
             item for item in expected_evidence
             if item not in matched_evidence
         ],
+    }
+
+
+def compute_metrics(results):
+    """Aggregate multi-dimensional benchmark metrics separately."""
+    total = len(results)
+    if total == 0:
+        return {}
+
+    analysis_passed_count = sum(1 for r in results if r.get("analysis_passed", False))
+    repro_confirmed_count = sum(1 for r in results if r.get("reproduction_confirmed", False))
+    repro_resolved_count = sum(1 for r in results if r.get("reproduction_resolved", False))
+    fix_verified_count = sum(1 for r in results if r.get("fix_verified", False))
+    regression_caught_count = sum(
+        1 for r in results if r.get("verification_status") == "regression_failed" or r.get("regression_suite_passed") is False
+    )
+    fp_rejected_count = sum(1 for r in results if r.get("false_positive_rejected", False))
+    timeout_enforced_count = sum(1 for r in results if r.get("timeout_enforced", False))
+    dependency_classified_count = sum(1 for r in results if r.get("dependency_classified", False))
+
+    return {
+        "total_cases": total,
+        "analysis_passed": analysis_passed_count,
+        "analysis_pass_rate": round(analysis_passed_count / total, 2),
+        "reproduction_confirmed": repro_confirmed_count,
+        "reproduction_confirmed_rate": round(repro_confirmed_count / total, 2),
+        "reproduction_resolved": repro_resolved_count,
+        "fix_verified": fix_verified_count,
+        "fix_verified_rate": round(fix_verified_count / total, 2),
+        "regressions_caught": regression_caught_count,
+        "false_positives_rejected": fp_rejected_count,
+        "timeouts_enforced": timeout_enforced_count,
+        "dependencies_classified": dependency_classified_count,
     }
 
 

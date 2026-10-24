@@ -40,10 +40,11 @@ flowchart TD
 3. The backend resolves the repository through the repository registry.
 4. The agent requests model guidance and invokes approved tools to search or read source files.
 5. Tool results are returned to the model as investigation evidence.
-6. The agent produces a diagnosis, or marks the investigation incomplete if it cannot reach a conclusion within its iteration limit.
-7. The backend stores the result and makes it available through the API and investigation history.
+6. When a concrete bug is identified, the agent can synthesize a minimal reproduction script and invoke `run_reproduction_test` to verify the bug reproduces for the expected reason in an isolated shadow workspace.
+7. The agent can propose a minimal patch and test it via `validate_patch` in the shadow workspace, producing a unified diff and verifying that reproduction succeeds and existing regressions pass.
+8. The backend stores the result, verification metadata, and diff, displaying a "Verified with Test" badge in the UI.
 
-The agent does not execute tests or modify repository files. Its recommendations are based on the source evidence returned by its tools.
+The agent never modifies repository files on the host; all execution and patching occur strictly within ephemeral shadow copies.
 
 ## Technology stack
 
@@ -239,14 +240,49 @@ pytest -q
 The latest recorded test result during development was:
 
 ```text
-61 passed, 1 skipped
+80 passed, 1 skipped
 ```
 
 This is a historical development result, not a guarantee that every environment or future revision will produce the same result.
 
 ## Evaluation
 
-DevPilot includes benchmark cases for known bug scenarios, saved baseline reports, a scorer, and a live evaluation runner.
+DevPilot includes an expanded 8-case benchmark taxonomy, an empirical engine benchmark runner, saved baseline reports, a multi-dimensional scorer, and a live evaluation runner.
+
+The benchmark spans 6 core categories:
+1. **Reliable Bug Reproduction:** `empty-list-division`, `normalized-username-lookup`, `off-by-one-total`
+2. **False Positive Rejection:** `non-reproducible-bogus`
+3. **Regression Detection:** `flawed-patch-regression`
+4. **Dependency / Setup Failure:** `missing-dependency`
+5. **Timeout Enforcement:** `runaway-infinite-loop`
+6. **Ambiguous API Contracts:** `ambiguous-contract-empty`
+
+### Run empirical engine benchmark
+
+The empirical engine benchmark exercises the actual reproduction and patch validation engine in shadow sandboxes across all 8 cases. You can execute multiple repeated trials to measure consistency and latency distributions:
+
+```powershell
+python evaluation\run_engine_benchmark.py --trials 5
+```
+
+It outputs live demonstrated outcomes and per-case latency statistics:
+
+```text
+======================================================================
+EMPIRICAL BENCHMARK SUMMARY (ACROSS ALL REPEATED TRIALS):
+  Total Benchmark Cases:        8
+  Analysis Quality Pass Rate:   8/8 (100%)
+  Reproduction Confirmed:       5/8 (62%)
+  Reproduction Resolved:        4/8
+  Fix Verified Cleanly:         3/8 (38%)
+  Regressions Caught:           1
+  False Positives Rejected:     1
+  Timeouts Enforced:            1
+  Dependencies Classified:      1
+======================================================================
+```
+
+For the complete benchmark specification, full 8-fixture catalog, runtime configurations, scoring definitions, and 5-trial latency distributions (min, mean, max, p95), see [evaluation/BENCHMARK.md](file:///c:/Users/ayush/DevPilot/evaluation/BENCHMARK.md).
 
 ### Evaluate saved baseline reports
 
@@ -254,13 +290,24 @@ DevPilot includes benchmark cases for known bug scenarios, saved baseline report
 python evaluation\run_baseline.py
 ```
 
-The baseline evaluation previously achieved:
+The baseline evaluation outputs an unambiguous, multi-dimensional metric breakdown:
 
 ```text
-Cases passed: 3/3
+=================================================================
+INDEPENDENT METRIC SUMMARY:
+  Total Cases:                  8
+  Analysis Quality Pass Rate:   8/8 (100%)
+  Reproduction Confirmed Rate:  0/8 (0%)
+  Fix Verification Rate:        0/8 (0%)
+  Regressions Caught:           0
+  False Positives Rejected:     1
+  Timeouts Enforced:            0
+  Dependencies Classified:      0
+=================================================================
+Note: Explanation quality and empirical sandbox verification are reported independently.
 ```
 
-The scorer uses keyword and evidence matching, alongside additional root-cause checks for supported cases. These metrics are useful for regression testing, but they do not establish semantic correctness in every possible investigation.
+The scorer strictly distinguishes explanation quality (keyword and verified evidence grounding) from empirical sandbox verification, ensuring that offline analysis never implies that bugs were empirically verified.
 
 ### Run live evaluation
 
@@ -270,28 +317,37 @@ Start the backend first, then run:
 python evaluation\run_live.py
 ```
 
-Live evaluation calls the configured model API and may consume API credits. It can also fail because of provider errors, network issues, timeouts, or model behavior. Saved baseline evaluation is preferable for routine regression checks.
+Live evaluation calls the configured model API and measures each verification metric independently. It can also fail because of provider errors, network issues, timeouts, or model behavior. Saved baseline evaluation is preferable for routine regression checks.
 
-## Security and reliability
+## Security and sandbox boundaries
 
-- Repository access is resolved through the repository registry.
-- The agent is restricted to approved search and file-reading tools.
-- Tool arguments are validated before execution.
-- Repository tools enforce path-containment checks and restrictions on sensitive files.
-- Source line numbers are taken from tool output rather than inferred by counting lines in a generated report.
-- Provider errors and incomplete investigations are handled separately from successful diagnoses.
-- API credentials must remain in environment configuration and must not be committed to source control.
+Execution is shielded via a defense-in-depth architecture combining OS-enforced boundaries and runtime audit hooks:
 
-These controls reduce risk but should not be treated as a substitute for a complete security audit.
+1. **OS-Enforced Isolation (Windows Job Objects & Low-Integrity Tokens):**
+   - Subprocesses are assigned to Windows Job Objects (`JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x2000`) guaranteeing process tree termination on exit.
+   - Enforced 256MB memory caps and max 5 active processes to prevent fork-bombs and memory exhaustion.
+   - Child processes run with Low Integrity SID (`S-1-16-4096`) and `DISABLE_MAX_PRIVILEGE` tokens, preventing unauthorized system changes.
+
+2. **Python Runtime Audit Hooks (PEP 578 via `sandbox_runner.py`):**
+   - Enforces socket network denial (`socket.connect`, `socket.bind`, `socket.sendto`, `socket.getaddrinfo`).
+   - Filesystem confinement prevents writing outside the ephemeral `shadow_root`.
+   - Intercepts subprocess spawning and dynamic C library (`ctypes`) loading.
+
+3. **Strict Verification Semantics:**
+   - `reproduction_resolved`: Minimal reproduction test passes against the shadow patch.
+   - `regression_suite_passed`: Preexisting regression tests pass without error.
+   - `fix_verified`: Strictly requires `reproduction_confirmed AND reproduction_resolved AND (regression_suite_passed is not False)`.
+   - If a patch fixes the reproduction but breaks the regression suite (as in `flawed-patch-regression`), `reproduction_resolved = True` while `fix_verified = False` and status is `regression_failed`. The UI and API never interpret reproduction resolution alone as an overall verified fix.
+
+These controls provide defense-in-depth during local development, but userland audit hooks and Job Objects do not replace a full VM/hypervisor or container boundary against adversarial native code exploits. A dedicated external security review of token lifecycle, ACLs, and process isolation is required before accepting untrusted repositories.
 
 ## Current limitations
 
 - **Local repositories:** The current investigation agent supports registered local repositories; GitHub repositories require a separate integration.
-- **No automatic code changes:** The agent reads and analyzes source code but does not modify files or execute tests.
+- **Host repository immutability:** The agent validates patches in shadow workspaces and displays unified diffs with test verification, but does not mutate the developer's original files.
 - **Model dependency:** Investigations depend on the configured NVIDIA model API and network availability.
 - **Bounded investigations:** An investigation may be marked incomplete if the model does not produce a conclusion within the iteration limit.
-- **Heuristic evaluation:** Benchmark scores are approximations of investigation quality and do not replace manual review.
-- **Dependency reproducibility:** The root Python dependency manifest needs to be populated and maintained for reliable fresh-environment installation.
+- **Contract ambiguity:** For edge cases like empty inputs, multiple valid API behaviors exist (e.g. returning 0 vs raising ValueError vs returning None); the engine identifies and highlights these contract trade-offs.
 
 ## Future improvements
 

@@ -164,6 +164,61 @@ function App() {
     return formatStatus(status);
   }
 
+  // Render unambiguous empirical verification status badges.
+  function renderVerificationBadge(verification) {
+    if (!verification) {
+      return (
+        <span className="history-status" title="Analysis only; unverified in sandbox">
+          Analysis Only
+        </span>
+      );
+    }
+
+    const isVerified =
+      verification.valid === true &&
+      verification.reproduction_confirmed === true &&
+      verification.fix_verified === true &&
+      verification.regression_suite_passed !== false;
+
+    if (isVerified) {
+      return (
+        <span className="history-status verified-badge" title="Empirically verified in isolated sandbox">
+          ✓ Verified with Test
+        </span>
+      );
+    }
+
+    if (verification.regression_suite_passed === false) {
+      return (
+        <span className="history-status failed" title="Patch broke existing regression tests">
+          ⚠ Regression Failed
+        </span>
+      );
+    }
+
+    if (verification.fix_verified === false && verification.reproduction_confirmed === true) {
+      return (
+        <span className="history-status failed" title="Reproduction still failing after patch">
+          Fix Unverified
+        </span>
+      );
+    }
+
+    if (verification.reproduction_confirmed === false) {
+      return (
+        <span className="history-status incomplete" title="Bug could not be reproduced in sandbox">
+          Repro Unconfirmed
+        </span>
+      );
+    }
+
+    return (
+      <span className="history-status failed" title="Sandbox verification failed">
+        Verification Failed
+      </span>
+    );
+  }
+
   // Release the preview URL when an image is replaced or the app unmounts.
   useEffect(() => {
     return () => {
@@ -555,17 +610,20 @@ function App() {
                         </h2>
                       </div>
 
-                      <span
-                        className={`history-status ${
-                          investigationResult.status === "completed"
-                            ? "resolved"
-                            : investigationResult.status === "failed"
-                              ? "failed"
-                              : "incomplete"
-                        }`}
-                      >
-                        {historyStatus(investigationResult.status)}
-                      </span>
+                      <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+                        {renderVerificationBadge(investigationResult.verification)}
+                        <span
+                          className={`history-status ${
+                            investigationResult.status === "completed"
+                              ? "resolved"
+                              : investigationResult.status === "failed"
+                                ? "failed"
+                                : "incomplete"
+                          }`}
+                        >
+                          {historyStatus(investigationResult.status)}
+                        </span>
+                      </div>
                     </div>
 
                     <p className="muted tiny">
@@ -574,6 +632,71 @@ function App() {
                       {" · "}
                       Agent iterations: {investigationResult.iterations ?? "—"}
                     </p>
+
+                    {investigationResult.verification && (
+                      <section className="verification-card">
+                        <div className="verification-header">
+                          <div className="verification-title">
+                            <span>🛡️</span>
+                            <strong>Empirical Sandbox Verification</strong>
+                          </div>
+                          {renderVerificationBadge(investigationResult.verification)}
+                        </div>
+
+                        <div className="verification-meta">
+                          <div className="verification-stat">
+                            <span>Analysis Status</span>
+                            <strong>
+                              {investigationResult.verification.analysis_passed ? "Analysis Passed" : "Incomplete"}
+                            </strong>
+                          </div>
+                          <div className="verification-stat">
+                            <span>Baseline Reproduction</span>
+                            <strong>
+                              {investigationResult.verification.reproduction_confirmed
+                                ? `Confirmed (${investigationResult.verification.pre_fix?.exception_type || "Observed"})`
+                                : "Not Reproduced"}
+                            </strong>
+                          </div>
+                          <div className="verification-stat">
+                            <span>Fix Verification</span>
+                            <strong>
+                              {investigationResult.verification.fix_verified
+                                ? "Fix Verified (Passed 0)"
+                                : "Fix Unverified"}
+                            </strong>
+                          </div>
+                          <div className="verification-stat">
+                            <span>Regression Suite</span>
+                            <strong>
+                              {investigationResult.verification.regression_suite_passed === true
+                                ? "All Passed (0 regressions)"
+                                : investigationResult.verification.regression_suite_passed === false
+                                  ? "Regression Failed"
+                                  : "None configured"}
+                            </strong>
+                          </div>
+                        </div>
+
+                        {investigationResult.verification.diff && (
+                          <details className="history-item" style={{ marginBottom: "10px" }} open>
+                            <summary>
+                              <strong>Verified Patch Diff ({investigationResult.verification.patched_file})</strong>
+                            </summary>
+                            <pre className="diff-view">{investigationResult.verification.diff}</pre>
+                          </details>
+                        )}
+
+                        {investigationResult.verification.test_code && (
+                          <details className="history-item">
+                            <summary>
+                              <strong>Reproduction Test Script</strong>
+                            </summary>
+                            <pre className="diff-view">{investigationResult.verification.test_code}</pre>
+                          </details>
+                        )}
+                      </section>
+                    )}
 
                     <article className="panel result-panel">
                       <h3>Analysis</h3>
@@ -620,9 +743,9 @@ function App() {
                     )}
 
                     <p className="muted tiny">
-                      These are model-generated findings based on returned
-                      evidence. Tests have not been run and no files were
-                      modified.
+                      {investigationResult.verification?.valid
+                        ? "Empirically verified in an isolated shadow sandbox. No host files were modified."
+                        : "These are model-generated findings based on returned evidence."}
                     </p>
                   </section>
                 )}
@@ -669,17 +792,20 @@ function App() {
                           {item.repository_name || item.repository_id} · {formatHistoryTime(item.created_at)}
                         </small>
                       </div>
-                      <span
-                        className={`history-status ${
-                          item.status === "completed"
-                            ? "resolved"
-                            : item.status === "failed"
-                              ? "failed"
-                              : "incomplete"
-                        }`}
-                      >
-                        {historyStatus(item.status)}
-                      </span>
+                      <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
+                        {renderVerificationBadge(item.verification)}
+                        <span
+                          className={`history-status ${
+                            item.status === "completed"
+                              ? "resolved"
+                              : item.status === "failed"
+                                ? "failed"
+                                : "incomplete"
+                          }`}
+                        >
+                          {historyStatus(item.status)}
+                        </span>
+                      </div>
                       <span className="history-arrow">→</span>
                     </article>
                   ))}
@@ -809,21 +935,64 @@ function App() {
                           {item.repository_name || item.repository_id} · {formatHistoryTime(item.created_at)}
                         </small>
                       </div>
-                      <span
-                        className={`history-status ${
-                          item.status === "completed"
-                            ? "resolved"
-                            : item.status === "failed"
-                              ? "failed"
-                              : "incomplete"
-                        }`}
-                      >
-                        {historyStatus(item.status)}
-                      </span>
+                      <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
+                        {renderVerificationBadge(item.verification)}
+                        <span
+                          className={`history-status ${
+                            item.status === "completed"
+                              ? "resolved"
+                              : item.status === "failed"
+                                ? "failed"
+                                : "incomplete"
+                          }`}
+                        >
+                          {historyStatus(item.status)}
+                        </span>
+                      </div>
                     </summary>
 
                     <div className="history-detail">
                       <p><strong>Repository:</strong> {item.repository_name || item.repository_id}</p>
+
+                      {item.verification && (
+                        <div className="verification-card" style={{ margin: "14px 0" }}>
+                          <div className="verification-header">
+                            <div className="verification-title">
+                              <span>🛡️</span>
+                              <strong>Empirical Sandbox Verification</strong>
+                            </div>
+                            {renderVerificationBadge(item.verification)}
+                          </div>
+                          <div className="verification-meta">
+                            <div className="verification-stat">
+                              <span>Baseline Reproduction</span>
+                              <strong>
+                                {item.verification.reproduction_confirmed
+                                  ? `Confirmed (${item.verification.pre_fix?.exception_type || "Observed"})`
+                                  : "Not Reproduced"}
+                              </strong>
+                            </div>
+                            <div className="verification-stat">
+                              <span>Fix Verification</span>
+                              <strong>{item.verification.fix_verified ? "Fix Verified (Passed 0)" : "Fix Unverified"}</strong>
+                            </div>
+                            <div className="verification-stat">
+                              <span>Regression Suite</span>
+                              <strong>
+                                {item.verification.regression_suite_passed === true
+                                  ? "Passed"
+                                  : item.verification.regression_suite_passed === false
+                                    ? "Regression Failed"
+                                    : "None configured"}
+                              </strong>
+                            </div>
+                          </div>
+                          {item.verification.diff && (
+                            <pre className="diff-view">{item.verification.diff}</pre>
+                          )}
+                        </div>
+                      )}
+
                       <p><strong>Report:</strong></p>
                       <div className="investigation-answer">
                         <ReactMarkdown remarkPlugins={[remarkGfm]}>

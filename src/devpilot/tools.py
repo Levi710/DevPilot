@@ -214,3 +214,66 @@ def read_file(path: str, repo_root: str = ".") -> str:
     except (OSError, ValueError) as exc:
         # Return a readable tool error rather than crashing the investigation loop.
         return f"Error reading file: {exc}"
+
+
+def run_reproduction_test(
+    test_code: str,
+    expected_exception: str | None = None,
+    repo_root: str = ".",
+) -> dict:
+    """
+    Run an isolated reproduction test in a shadow workspace (Phase 2).
+
+    Never grants write access to the original repository.
+    """
+    root = _resolve_repository_root(repo_root)
+    if root is None:
+        return {
+            "reproduced": False,
+            "status": "environment_error",
+            "stderr": "Repository directory does not exist.",
+        }
+
+    try:
+        from sandbox import run_reproduction_test as _run_repro
+    except ImportError:
+        from devpilot.sandbox import run_reproduction_test as _run_repro
+
+    return _run_repro(
+        repo_root=str(root),
+        test_code=test_code,
+        expected_exception=expected_exception,
+    )
+
+
+def validate_patch(
+    patch_file: str,
+    patched_content: str,
+    test_code: str,
+    expected_exception: str | None = None,
+    repo_root: str = ".",
+) -> dict:
+    """
+    Apply a patch only to a shadow copy and validate it against the reproduction test (Phase 3).
+
+    Never touches the original repository files.
+    """
+    root = _resolve_repository_root(repo_root)
+    if root is None:
+        return {
+            "valid": False,
+            "reason": "Repository directory does not exist.",
+        }
+
+    try:
+        from sandbox import validate_patch as _validate_patch
+    except ImportError:
+        from devpilot.sandbox import validate_patch as _validate_patch
+
+    return _validate_patch(
+        repo_root=str(root),
+        patch_file=patch_file,
+        patched_content=patched_content,
+        test_code=test_code,
+        expected_exception=expected_exception,
+    )

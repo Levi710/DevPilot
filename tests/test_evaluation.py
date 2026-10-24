@@ -49,11 +49,21 @@ def correct_boundary_answer():
     )
 
 
-def test_manifest_contains_three_cases():
+def test_manifest_contains_eight_cases():
     cases = load_cases(PROJECT_ROOT / "evaluation" / "cases.json")
 
-    assert len(cases) == 3
-    assert len({case["case_id"] for case in cases}) == 3
+    assert len(cases) == 8
+    assert len({case["case_id"] for case in cases}) == 8
+    expected_categories = {
+        "reliable_reproduction",
+        "false_positive_rejection",
+        "regression_detection",
+        "dependency_failure",
+        "timeout_enforcement",
+        "ambiguous_contract",
+    }
+    categories = {case.get("category") for case in cases}
+    assert expected_categories.issubset(categories)
 
 
 def test_correct_boundary_report_passes():
@@ -221,3 +231,59 @@ def test_structured_root_cause_rejects_wrong_correct_behavior():
         is False
     )
     assert result["passed"] is False
+
+
+def test_unambiguous_verification_metrics_separated():
+    cases = load_cases(PROJECT_ROOT / "evaluation" / "cases.json")
+    case = next(c for c in cases if c["case_id"] == "empty-list-division")
+
+    # A report with high quality analysis but unverified sandbox
+    unverified_report = {
+        "answer": "Crash caused by division by zero on empty list len(numbers) zero",
+        "evidence": [
+            {"result": "FILE: calculator.py\n4 | return total / len(numbers)\n"},
+            {"result": "FILE: main.py\n4 | scores = []\n"},
+        ],
+    }
+    unverified_score = score_report(case, unverified_report)
+    assert unverified_score["analysis_passed"] is True
+    assert unverified_score["reproduction_confirmed"] is False
+    assert unverified_score["fix_verified"] is False
+    assert unverified_score["verification_status"] == "unverified"
+
+    # A report with empirical verification present
+    verified_report = {
+        **unverified_report,
+        "verification": {
+            "valid": True,
+            "reproduction_confirmed": True,
+            "fix_verified": True,
+            "regression_suite_passed": True,
+            "verification_status": "fully_verified",
+        },
+    }
+    verified_score = score_report(case, verified_report)
+    assert verified_score["analysis_passed"] is True
+    assert verified_score["reproduction_confirmed"] is True
+    assert verified_score["fix_verified"] is True
+    assert verified_score["regression_suite_passed"] is True
+    assert verified_score["verification_status"] == "fully_verified"
+
+
+def test_false_positive_rejection_metric():
+    cases = load_cases(PROJECT_ROOT / "evaluation" / "cases.json")
+    case = next(c for c in cases if c["case_id"] == "non-reproducible-bogus")
+
+    report = {
+        "answer": "Addition evaluates to integer and returns valid expected number; cannot reproduce bug.",
+        "evidence": [{"result": "FILE: calculator.py\n3 | total = sum(numbers)\n"}],
+        "verification": {
+            "valid": False,
+            "reproduction_confirmed": False,
+            "fix_verified": False,
+            "verification_status": "reproduction_failed",
+        },
+    }
+    score = score_report(case, report)
+    assert score["false_positive_rejected"] is True
+    assert score["reproduction_confirmed"] is False

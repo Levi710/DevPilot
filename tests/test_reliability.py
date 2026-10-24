@@ -349,3 +349,72 @@ def test_agent_assigns_fallback_id_if_model_returns_empty_id(temp_repo):
 
     assert result["status"] == "completed"
     assert tool_call_no_id.id.startswith("call_")
+
+
+def test_api_persists_and_returns_verification(temp_repo):
+    """Verify that when an investigation contains verification metadata, the API persists and returns it."""
+    from fastapi.testclient import TestClient
+
+    connected_repo = {
+        "repository_id": "test-repo",
+        "name": "Test Repo",
+        "source_type": "local",
+        "location": str(temp_repo),
+        "status": "connected",
+    }
+
+    mock_verification = {
+        "valid": True,
+        "reproduction_resolved": True,
+        "regression_suite_passed": True,
+        "patched_file": "calculator.py",
+        "diff": "--- a/calculator.py\n+++ b/calculator.py\n@@ -1 +1,2 @@\n+if not items: return 0\n",
+        "pre_fix": {
+            "reproduced": True,
+            "exception_type": "ZeroDivisionError",
+        },
+        "post_fix": {
+            "exit_code": 0,
+        },
+        "test_code": "assert calculate_average([]) == 0",
+    }
+
+    mock_result = {
+        "status": "completed",
+        "repository_id": "test-repo",
+        "repository_name": "Test Repo",
+        "answer": "Bug identified and fixed.",
+        "evidence": [{"tool": "validate_patch", "status": "success", "result": "clean pass"}],
+        "verification": mock_verification,
+        "iterations": 2,
+    }
+
+    client = TestClient(app)
+
+    with (
+        patch("devpilot.api.get_repository", return_value=connected_repo),
+        patch("devpilot.api.run_investigation", return_value=mock_result),
+    ):
+        response = client.post(
+            "/api/investigations",
+            json={
+                "repository_id": "test-repo",
+                "description": "Division by zero on empty list",
+            },
+        )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "completed"
+    assert data["verification"] is not None
+    assert data["verification"]["valid"] is True
+    assert data["verification"]["pre_fix"]["exception_type"] == "ZeroDivisionError"
+
+    # Verify retrieval via GET /api/investigations
+    get_res = client.get("/api/investigations")
+    assert get_res.status_code == 200
+    all_items = get_res.json()["investigations"]
+    saved = next(item for item in all_items if item["id"] == data["id"])
+    assert saved["verification"] is not None
+    assert saved["verification"]["valid"] is True
+    assert saved["verification"]["diff"] == mock_verification["diff"]

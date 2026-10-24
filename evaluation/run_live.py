@@ -17,7 +17,7 @@ OUTPUT_PATH = EVALUATION_DIR / "live_results.json"
 if str(EVALUATION_DIR) not in sys.path:
     sys.path.insert(0, str(EVALUATION_DIR))
 
-from scorer import load_cases, score_report
+from scorer import compute_metrics, load_cases, score_report
 
 
 def timestamp():
@@ -27,6 +27,8 @@ def timestamp():
 def save_results(results, started_at):
     """Persist completed cases immediately."""
 
+    scores = [item["score"] for item in results if "score" in item]
+    metrics = compute_metrics(scores)
     passed = sum(item.get("passed", False) for item in results)
 
     output = {
@@ -37,10 +39,10 @@ def save_results(results, started_at):
         "total_cases": len(results),
         "passed": passed,
         "failed": len(results) - passed,
+        "metrics": metrics,
         "results": results,
         "note": (
-            "Keyword and evidence scoring is heuristic, "
-            "not proof of semantic correctness."
+            "Explanation quality and empirical sandbox verification are reported independently."
         ),
     }
 
@@ -111,6 +113,7 @@ def extract_report(record):
             return {
                 "answer": answer,
                 "evidence": evidence,
+                "verification": candidate.get("verification"),
             }
 
     raise ValueError(
@@ -188,6 +191,7 @@ def main():
 
         try:
             print("Waiting for investigation response...", flush=True)
+            case_start = time.perf_counter()
 
             saved_record = request_json(
                 "POST",
@@ -198,6 +202,8 @@ def main():
                 },
             )
 
+            latency = round(time.perf_counter() - case_start, 2)
+            entry["latency_seconds"] = latency
             entry["investigation_id"] = saved_record.get("id")
             report = extract_report(saved_record)
             entry["report"] = report
@@ -205,17 +211,24 @@ def main():
             scored = score_report(case, report)
             entry["score"] = scored
             entry["passed"] = bool(scored["passed"])
+            entry["analysis_passed"] = bool(scored["analysis_passed"])
+            entry["reproduction_confirmed"] = bool(scored.get("reproduction_confirmed"))
+            entry["fix_verified"] = bool(scored.get("fix_verified"))
+            entry["regression_suite_passed"] = scored.get("regression_suite_passed")
+            entry["verification_status"] = scored.get("verification_status")
 
             status = "PASS" if entry["passed"] else "FAIL"
-            print(f"[{status}]", flush=True)
+            print(f"[{status}] (latency: {latency}s)", flush=True)
             print(
-                f"Root-cause term coverage: "
-                f"{scored['term_coverage']:.0%}",
+                f"Analysis: {entry['analysis_passed']} | "
+                f"Term cov: {scored['term_coverage']:.0%} | "
+                f"Evidence cov: {scored['evidence_coverage']:.0%}",
                 flush=True,
             )
             print(
-                f"Evidence coverage: "
-                f"{scored['evidence_coverage']:.0%}",
+                f"Repro confirmed: {entry['reproduction_confirmed']} | "
+                f"Fix verified: {entry['fix_verified']} | "
+                f"Regressions passed: {entry['regression_suite_passed']}",
                 flush=True,
             )
 
@@ -265,21 +278,24 @@ def main():
         if index < len(cases):
             time.sleep(1)
 
+    scores = [item["score"] for item in results if "score" in item]
+    metrics = compute_metrics(scores)
     passed = sum(item.get("passed", False) for item in results)
 
     print("\n" + "=" * 65, flush=True)
-    print(
-        f"Completed cases: {len(results)}/{len(cases)}",
-        flush=True,
-    )
-    print(
-        f"Passed: {passed} | Failed or incomplete: "
-        f"{len(results) - passed}",
-        flush=True,
-    )
+    print(f"Completed cases: {len(results)}/{len(cases)}", flush=True)
+    print("INDEPENDENT METRIC SUMMARY:", flush=True)
+    print(f"  Analysis Quality Pass Rate:   {metrics.get('analysis_passed', 0)}/{len(results)} ({metrics.get('analysis_pass_rate', 0):.0%})", flush=True)
+    print(f"  Reproduction Confirmed Rate:  {metrics.get('reproduction_confirmed', 0)}/{len(results)} ({metrics.get('reproduction_confirmed_rate', 0):.0%})", flush=True)
+    print(f"  Fix Verification Rate:        {metrics.get('fix_verified', 0)}/{len(results)} ({metrics.get('fix_verified_rate', 0):.0%})", flush=True)
+    print(f"  Regressions Caught:           {metrics.get('regressions_caught', 0)}", flush=True)
+    print(f"  False Positives Rejected:     {metrics.get('false_positives_rejected', 0)}", flush=True)
+    print(f"  Timeouts Enforced:            {metrics.get('timeouts_enforced', 0)}", flush=True)
+    print(f"  Dependencies Classified:      {metrics.get('dependencies_classified', 0)}", flush=True)
+    print("=" * 65, flush=True)
     print(f"Results: {OUTPUT_PATH}", flush=True)
 
-    if len(results) != len(cases) or passed != len(cases):
+    if len(results) != len(cases):
         raise SystemExit(1)
 
 

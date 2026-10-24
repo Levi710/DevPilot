@@ -1,7 +1,7 @@
-
 [
   {
     "case_id": "empty-list-division",
+    "category": "reliable_reproduction",
     "repository_id": "devpilot-known-bug-test",
     "description": "Empty-list division by zero",
     "expected_root_cause_terms": [
@@ -23,6 +23,7 @@
   },
   {
     "case_id": "normalized-username-lookup",
+    "category": "reliable_reproduction",
     "repository_id": "devpilot-data-flow-test",
     "description": "Normalized username is not used for lookup",
     "expected_root_cause_terms": [
@@ -48,6 +49,7 @@
   },
   {
     "case_id": "off-by-one-total",
+    "category": "reliable_reproduction",
     "repository_id": "devpilot-boundary-test",
     "description": "Final list element is skipped",
     "expected_root_cause_terms": [
@@ -90,5 +92,105 @@
         }
       ]
     }
+  },
+  {
+    "case_id": "non-reproducible-bogus",
+    "category": "false_positive_rejection",
+    "repository_id": "devpilot-known-bug-test",
+    "description": "Addition function returns string instead of number",
+    "expected_root_cause_terms": [
+      "not reproducible",
+      "cannot reproduce",
+      "expected",
+      "integer",
+      "valid"
+    ],
+    "expected_evidence": [
+      {
+        "file": "calculator.py",
+        "line": 3
+      }
+    ]
+  },
+  {
+    "case_id": "flawed-patch-regression",
+    "category": "regression_detection",
+    "repository_id": "devpilot-boundary-test",
+    "description": "Candidate loop patch introduces regression on existing test suite",
+    "expected_root_cause_terms": [
+      "regression",
+      "suite",
+      "fails",
+      "breaks"
+    ],
+    "expected_evidence": [
+      {
+        "file": "calculator.py",
+        "line": 3
+      },
+      {
+        "file": "calculator.py",
+        "line": 4
+      }
+    ]
+  },
+  {
+    "case_id": "missing-dependency",
+    "category": "dependency_failure",
+    "repository_id": "devpilot-data-flow-test",
+    "description": "Module fails on missing external dependency import",
+    "expected_root_cause_terms": [
+      "import",
+      "dependency",
+      "module",
+      "missing"
+    ],
+    "expected_evidence": [
+      {
+        "file": "service.py",
+        "line": 1
+      }
+    ]
+  },
+  {
+    "case_id": "runaway-infinite-loop",
+    "category": "timeout_enforcement",
+    "repository_id": "devpilot-known-bug-test",
+    "description": "Runaway execution terminated by sandbox timeout and resource limit",
+    "expected_root_cause_terms": [
+      "timeout",
+      "infinite loop",
+      "terminated",
+      "limit"
+    ],
+    "expected_evidence": [
+      {
+        "file": "calculator.py",
+        "line": 1
+      }
+    ]
+  },
+  {
+    "case_id": "ambiguous-contract-empty",
+    "category": "ambiguous_contract",
+    "repository_id": "devpilot-known-bug-test",
+    "description": "Ambiguous API contract on empty list input: return zero vs raise ValueError",
+    "expected_root_cause_terms": [
+      "ambiguous",
+      "contract",
+      "valueerror",
+      "zero",
+      "specification"
+    ],
+    "expected_evidence": [
+      {
+        "file": "calculator.py",
+        "line": 1
+      },
+      {
+        "file": "calculator.py",
+        "line": 4
+      }
+    ]
   }
 ]

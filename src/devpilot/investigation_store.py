@@ -11,6 +11,9 @@ DATA_DIR = Path(__file__).resolve().parent / "data"
 DB_PATH = DATA_DIR / "investigations.sqlite3"
 
 
+_STORE_INITIALIZED = False
+
+
 def _connect() -> sqlite3.Connection:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     connection = sqlite3.connect(DB_PATH, timeout=10)
@@ -19,7 +22,9 @@ def _connect() -> sqlite3.Connection:
 
 
 def initialize_store() -> None:
-    """Create the history table if it does not exist yet."""
+    """Create the history table if it does not exist yet and ensure schema migrations."""
+    global _STORE_INITIALIZED
+    _STORE_INITIALIZED = True
     with _connect() as connection:
         connection.execute(
             """
@@ -31,15 +36,30 @@ def initialize_store() -> None:
                 status TEXT NOT NULL,
                 answer TEXT NOT NULL,
                 evidence_json TEXT NOT NULL,
+                verification_json TEXT,
                 iterations INTEGER,
                 created_at TEXT NOT NULL
             )
             """
         )
+        # Migrate existing tables if verification_json column is absent
+        cursor = connection.execute("PRAGMA table_info(investigations)")
+        existing_cols = {col["name"] for col in cursor.fetchall()}
+        if "verification_json" not in existing_cols:
+            try:
+                connection.execute("ALTER TABLE investigations ADD COLUMN verification_json TEXT")
+            except Exception:
+                pass
+
         connection.execute(
             "CREATE INDEX IF NOT EXISTS idx_investigations_created_at "
             "ON investigations(created_at DESC)"
         )
+
+
+def _ensure_store_initialized() -> None:
+    if not _STORE_INITIALIZED:
+        initialize_store()
 
 
 def save_investigation(
@@ -50,15 +70,21 @@ def save_investigation(
     result: dict[str, Any],
 ) -> dict[str, Any]:
     """Persist a report and return the saved record."""
+    _ensure_store_initialized()
     created_at = datetime.now(timezone.utc).isoformat()
     evidence = result.get("evidence") or []
+    verification = result.get("verification")
+    verification_json = (
+        json.dumps(verification, ensure_ascii=False) if verification else None
+    )
+
     with _connect() as connection:
         cursor = connection.execute(
             """
             INSERT INTO investigations (
                 repository_id, repository_name, description, status,
-                answer, evidence_json, iterations, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                answer, evidence_json, verification_json, iterations, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 repository_id,
@@ -67,6 +93,7 @@ def save_investigation(
                 str(result.get("status", "unknown")),
                 str(result.get("answer", "")),
                 json.dumps(evidence, ensure_ascii=False),
+                verification_json,
                 result.get("iterations"),
                 created_at,
             ),
@@ -77,6 +104,13 @@ def save_investigation(
 
 
 def _row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
+    verification = None
+    if "verification_json" in row.keys() and row["verification_json"]:
+        try:
+            verification = json.loads(row["verification_json"])
+        except (json.JSONDecodeError, TypeError):
+            verification = None
+
     return {
         "id": row["id"],
         "repository_id": row["repository_id"],
@@ -85,6 +119,7 @@ def _row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
         "status": row["status"],
         "answer": row["answer"],
         "evidence": json.loads(row["evidence_json"]),
+        "verification": verification,
         "iterations": row["iterations"],
         "created_at": row["created_at"],
     }
@@ -92,6 +127,7 @@ def _row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
 
 def list_investigations(limit: int = 50) -> list[dict[str, Any]]:
     """Return the newest investigation records first."""
+    _ensure_store_initialized()
     safe_limit = max(1, min(int(limit), 100))
     with _connect() as connection:
         rows = connection.execute(
@@ -103,6 +139,7 @@ def list_investigations(limit: int = 50) -> list[dict[str, Any]]:
 
 def get_investigation(record_id: int) -> dict[str, Any] | None:
     """Return one saved report, or None if it does not exist."""
+    _ensure_store_initialized()
     with _connect() as connection:
         row = connection.execute(
             "SELECT * FROM investigations WHERE id = ?",

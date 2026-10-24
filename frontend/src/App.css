@@ -617,6 +617,78 @@ textarea::placeholder {
   border-color: #5c242b;
 }
 
+.history-status.verified-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: #4ade80;
+  background: rgba(22, 65, 41, 0.5);
+  border: 1px solid #16a34a;
+  font-weight: 600;
+  box-shadow: 0 0 12px rgba(34, 197, 94, 0.15);
+}
+
+.verification-card {
+  margin-top: 18px;
+  background: #0d171d;
+  border: 1px solid #18473a;
+  border-radius: 10px;
+  padding: 18px;
+}
+
+.verification-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 14px;
+}
+
+.verification-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #4ade80;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.verification-meta {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.verification-stat {
+  padding: 8px 12px;
+  background: #091014;
+  border: 1px solid #13332a;
+  border-radius: 6px;
+  font-size: 11px;
+}
+
+.verification-stat span {
+  display: block;
+  color: #7b9e94;
+  margin-bottom: 3px;
+}
+
+.verification-stat strong {
+  color: #e0f2fe;
+}
+
+.diff-view {
+  background: #060b0e;
+  border: 1px solid #13272f;
+  border-radius: 6px;
+  padding: 12px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 11px;
+  color: #bae6fd;
+  overflow-x: auto;
+  white-space: pre;
+}
+
 .history-arrow {
   color: #858ba0;
 }

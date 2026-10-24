@@ -1,14 +1,39 @@
 {
-  "total_cases": 3,
-  "passed": 3,
-  "failed": 0,
+  "total_cases": 8,
+  "passed": 8,
+  "metrics": {
+    "total_cases": 8,
+    "analysis_passed": 8,
+    "analysis_pass_rate": 1.0,
+    "reproduction_confirmed": 0,
+    "reproduction_confirmed_rate": 0.0,
+    "reproduction_resolved": 0,
+    "fix_verified": 0,
+    "fix_verified_rate": 0.0,
+    "regressions_caught": 0,
+    "false_positives_rejected": 1,
+    "timeouts_enforced": 0,
+    "dependencies_classified": 0
+  },
   "results": [
     {
       "case_id": "empty-list-division",
+      "category": "reliable_reproduction",
       "passed": true,
+      "analysis_passed": true,
       "term_coverage": 1.0,
       "evidence_coverage": 1.0,
       "contradictory_diagnosis": false,
+      "reproduction_confirmed": false,
+      "reproduction_resolved": false,
+      "reproduction_success": false,
+      "fix_verified": false,
+      "regression_suite_passed": null,
+      "verification_status": "unverified",
+      "false_positive": false,
+      "false_positive_rejected": false,
+      "timeout_enforced": false,
+      "dependency_classified": false,
       "root_cause_validation": {
         "applicable": false,
         "passed": true,
@@ -36,10 +61,22 @@
     },
     {
       "case_id": "normalized-username-lookup",
+      "category": "reliable_reproduction",
       "passed": true,
+      "analysis_passed": true,
       "term_coverage": 1.0,
       "evidence_coverage": 1.0,
       "contradictory_diagnosis": false,
+      "reproduction_confirmed": false,
+      "reproduction_resolved": false,
+      "reproduction_success": false,
+      "fix_verified": false,
+      "regression_suite_passed": null,
+      "verification_status": "unverified",
+      "false_positive": false,
+      "false_positive_rejected": false,
+      "timeout_enforced": false,
+      "dependency_classified": false,
       "root_cause_validation": {
         "applicable": false,
         "passed": true,
@@ -71,10 +108,22 @@
     },
     {
       "case_id": "off-by-one-total",
+      "category": "reliable_reproduction",
       "passed": true,
+      "analysis_passed": true,
       "term_coverage": 1.0,
       "evidence_coverage": 1.0,
       "contradictory_diagnosis": false,
+      "reproduction_confirmed": false,
+      "reproduction_resolved": false,
+      "reproduction_success": false,
+      "fix_verified": false,
+      "regression_suite_passed": null,
+      "verification_status": "unverified",
+      "false_positive": false,
+      "false_positive_rejected": false,
+      "timeout_enforced": false,
+      "dependency_classified": false,
       "root_cause_validation": {
         "applicable": true,
         "passed": true,
@@ -104,6 +153,212 @@
         {
           "file": "main.py",
           "line": 3
+        }
+      ],
+      "missing_evidence": []
+    },
+    {
+      "case_id": "non-reproducible-bogus",
+      "category": "false_positive_rejection",
+      "passed": true,
+      "analysis_passed": true,
+      "term_coverage": 0.8,
+      "evidence_coverage": 1.0,
+      "contradictory_diagnosis": false,
+      "reproduction_confirmed": false,
+      "reproduction_resolved": false,
+      "reproduction_success": false,
+      "fix_verified": false,
+      "regression_suite_passed": null,
+      "verification_status": "unverified",
+      "false_positive": false,
+      "false_positive_rejected": true,
+      "timeout_enforced": false,
+      "dependency_classified": false,
+      "root_cause_validation": {
+        "applicable": false,
+        "passed": true,
+        "checks": {},
+        "missing": []
+      },
+      "matched_terms": [
+        "not reproducible",
+        "expected",
+        "integer",
+        "valid"
+      ],
+      "missing_terms": [
+        "cannot reproduce"
+      ],
+      "matched_evidence": [
+        {
+          "file": "calculator.py",
+          "line": 3
+        }
+      ],
+      "missing_evidence": []
+    },
+    {
+      "case_id": "flawed-patch-regression",
+      "category": "regression_detection",
+      "passed": true,
+      "analysis_passed": true,
+      "term_coverage": 1.0,
+      "evidence_coverage": 1.0,
+      "contradictory_diagnosis": false,
+      "reproduction_confirmed": false,
+      "reproduction_resolved": false,
+      "reproduction_success": false,
+      "fix_verified": false,
+      "regression_suite_passed": null,
+      "verification_status": "unverified",
+      "false_positive": false,
+      "false_positive_rejected": false,
+      "timeout_enforced": false,
+      "dependency_classified": false,
+      "root_cause_validation": {
+        "applicable": false,
+        "passed": true,
+        "checks": {},
+        "missing": []
+      },
+      "matched_terms": [
+        "regression",
+        "suite",
+        "fails",
+        "breaks"
+      ],
+      "missing_terms": [],
+      "matched_evidence": [
+        {
+          "file": "calculator.py",
+          "line": 3
+        },
+        {
+          "file": "calculator.py",
+          "line": 4
+        }
+      ],
+      "missing_evidence": []
+    },
+    {
+      "case_id": "missing-dependency",
+      "category": "dependency_failure",
+      "passed": true,
+      "analysis_passed": true,
+      "term_coverage": 1.0,
+      "evidence_coverage": 1.0,
+      "contradictory_diagnosis": false,
+      "reproduction_confirmed": false,
+      "reproduction_resolved": false,
+      "reproduction_success": false,
+      "fix_verified": false,
+      "regression_suite_passed": null,
+      "verification_status": "unverified",
+      "false_positive": false,
+      "false_positive_rejected": false,
+      "timeout_enforced": false,
+      "dependency_classified": false,
+      "root_cause_validation": {
+        "applicable": false,
+        "passed": true,
+        "checks": {},
+        "missing": []
+      },
+      "matched_terms": [
+        "import",
+        "dependency",
+        "module",
+        "missing"
+      ],
+      "missing_terms": [],
+      "matched_evidence": [
+        {
+          "file": "service.py",
+          "line": 1
+        }
+      ],
+      "missing_evidence": []
+    },
+    {
+      "case_id": "runaway-infinite-loop",
+      "category": "timeout_enforcement",
+      "passed": true,
+      "analysis_passed": true,
+      "term_coverage": 1.0,
+      "evidence_coverage": 1.0,
+      "contradictory_diagnosis": false,
+      "reproduction_confirmed": false,
+      "reproduction_resolved": false,
+      "reproduction_success": false,
+      "fix_verified": false,
+      "regression_suite_passed": null,
+      "verification_status": "unverified",
+      "false_positive": false,
+      "false_positive_rejected": false,
+      "timeout_enforced": false,
+      "dependency_classified": false,
+      "root_cause_validation": {
+        "applicable": false,
+        "passed": true,
+        "checks": {},
+        "missing": []
+      },
+      "matched_terms": [
+        "timeout",
+        "infinite loop",
+        "terminated",
+        "limit"
+      ],
+      "missing_terms": [],
+      "matched_evidence": [
+        {
+          "file": "calculator.py",
+          "line": 1
+        }
+      ],
+      "missing_evidence": []
+    },
+    {
+      "case_id": "ambiguous-contract-empty",
+      "category": "ambiguous_contract",
+      "passed": true,
+      "analysis_passed": true,
+      "term_coverage": 1.0,
+      "evidence_coverage": 1.0,
+      "contradictory_diagnosis": false,
+      "reproduction_confirmed": false,
+      "reproduction_resolved": false,
+      "reproduction_success": false,
+      "fix_verified": false,
+      "regression_suite_passed": null,
+      "verification_status": "unverified",
+      "false_positive": false,
+      "false_positive_rejected": false,
+      "timeout_enforced": false,
+      "dependency_classified": false,
+      "root_cause_validation": {
+        "applicable": false,
+        "passed": true,
+        "checks": {},
+        "missing": []
+      },
+      "matched_terms": [
+        "ambiguous",
+        "contract",
+        "valueerror",
+        "zero",
+        "specification"
+      ],
+      "missing_terms": [],
+      "matched_evidence": [
+        {
+          "file": "calculator.py",
+          "line": 1
+        },
+        {
+          "file": "calculator.py",
+          "line": 4
         }
       ],
       "missing_evidence": []
