@@ -4,6 +4,7 @@
 import json
 import logging
 import os
+import time
 
 from dotenv import load_dotenv
 from openai import (
@@ -24,6 +25,7 @@ logger = logging.getLogger(__name__)
 
 # Bound each model request so a stalled provider call does not wait indefinitely.
 MODEL_REQUEST_TIMEOUT_SECONDS = 90
+MAX_PROVIDER_RETRIES = 2
 
 # Tell the model which repository search function it may call.
 SEARCH_CODE_TOOL = {
@@ -31,7 +33,9 @@ SEARCH_CODE_TOOL = {
     "function": {
         "name": "search_code",
         "description": (
-            "Search Python source files in the selected repository. "
+            "Search Python source files in the selected repository using "
+            "plain-text substring matching (NOT regex; do not backslash-escape "
+            "characters like '(', ')', or '/'). "
             "Returns matching lines with repository-relative file paths and "
             "1-based source line numbers. Use this to locate code, then read "
             "the relevant file before making claims about exact behavior."
@@ -41,7 +45,7 @@ SEARCH_CODE_TOOL = {
             "properties": {
                 "query": {
                     "type": "string",
-                    "description": "Text to search for in Python files.",
+                    "description": "Text to search for in Python files (plain substring).",
                 }
             },
             "required": ["query"],
@@ -185,6 +189,76 @@ def execute_tool(tool_call, repo_root: str):
     raise ValueError(f"Unsupported tool requested: {tool_name}")
 
 
+def _call_model_with_retry(request_kwargs: dict, evidence: list, step: int):
+    """Execute a model completion with bounded retry for transient provider errors."""
+    attempt = 0
+    while True:
+        try:
+            return client.chat.completions.create(**request_kwargs)
+
+        except APIStatusError as exc:
+            _log_provider_error(exc)
+            if exc.status_code in (429, 500, 502, 503, 504) and attempt < MAX_PROVIDER_RETRIES:
+                attempt += 1
+                backoff = 1.5 * attempt
+                logger.warning(
+                    "Transient model provider HTTP %s on attempt %s. Retrying in %.1fs...",
+                    exc.status_code,
+                    attempt,
+                    backoff,
+                )
+                time.sleep(backoff)
+                continue
+
+            err = RuntimeError(
+                f"The model provider returned HTTP {exc.status_code}. "
+                "Check the backend logs for provider diagnostics before retrying."
+            )
+            err.evidence = list(evidence)
+            err.iterations = step + 1
+            raise err from exc
+
+        except APITimeoutError as exc:
+            logger.warning(
+                "Model request timed out after %s seconds; model=%s",
+                MODEL_REQUEST_TIMEOUT_SECONDS,
+                MODEL,
+            )
+            if attempt < 1:
+                attempt += 1
+                logger.warning("Retrying timed out model request (attempt %s)...", attempt)
+                time.sleep(1.0)
+                continue
+
+            err = RuntimeError(
+                f"The model request timed out after "
+                f"{MODEL_REQUEST_TIMEOUT_SECONDS} seconds. "
+                "No automatic retry was attempted."
+            )
+            err.evidence = list(evidence)
+            err.iterations = step + 1
+            raise err from exc
+
+        except APIConnectionError as exc:
+            logger.warning(
+                "Could not connect to model provider; error_type=%s",
+                type(exc).__name__,
+            )
+            if attempt < 1:
+                attempt += 1
+                logger.warning("Retrying model connection (attempt %s)...", attempt)
+                time.sleep(1.0)
+                continue
+
+            err = RuntimeError(
+                "Could not connect to the model API. "
+                "Check the network and backend logs before retrying."
+            )
+            err.evidence = list(evidence)
+            err.iterations = step + 1
+            raise err from exc
+
+
 def run_investigation(
     repository_id: str,
     task: str,
@@ -252,23 +326,28 @@ def run_investigation(
                 "INVESTIGATION STRATEGY AND EFFICIENCY:\n"
                 "- Start from concrete identifiers and behavior in the user's bug report. "
                 "If a function or behavior is named, search for that identifier first.\n"
-                "- Prefer one specific search, then read the relevant source file. "
-                "Use at most one additional targeted search if a caller or dependency "
-                "is genuinely needed.\n"
-                "- Never search generic words such as 'report', 'history', 'evidence', "
-                "'class', 'root cause', or 'explanation' unless the user specifically "
-                "asks about those concepts in the code.\n"
-                "- After reading a relevant function, reason from its actual control "
-                "flow and stop searching when the cause is supported by evidence.\n"
-                "- Do not repeat a search that returned no useful matches. Do not search "
-                "for a bug description as literal source text.\n"
-                "- If evidence is sufficient, provide the diagnosis immediately; do not "
-                "use tools just to gather more context.\n"
-                "- If the iteration budget is nearly exhausted, prioritize a concise "
-                "evidence-backed answer over another search.\n"
-                "Explain the likely root cause, cite concise supporting evidence, "
-                "describe uncertainty, and suggest a safe next step. You may only "
-                "inspect the selected repository using the provided tools."
+                "- Search tools use plain-text substring matching (NOT regex; do not backslash-escape characters).\n"
+                "- Prefer one targeted search, then immediately read the relevant source file.\n"
+                "- When an error or unexpected behavior is found in a function "
+                "(such as division by zero on empty input, off-by-one loop boundary, or unused normalized data):\n"
+                "  1. Identify the exact line in that function causing the fault.\n"
+                "  2. Search for callers of that function (e.g. searching the function name or inspecting "
+                "entry points like main.py) and read the caller file to see what inputs are passed and verify "
+                "the complete failure path.\n"
+                "  3. Citing both the faulty definition and the caller creates a complete, verified investigation.\n"
+                "- Do not repeat searches for syntax fragments (e.g. '/', 'len', 'range') once you have found the file; "
+                "read the file directly.\n"
+                "- Never search generic words such as 'report', 'history', 'evidence', 'class', "
+                "'root cause', or 'explanation'.\n"
+                "- If the bug report is vague or lacks details (e.g. 'see whats wrong', 'fix bug') and repository "
+                "inspection reveals no reproducible defect, do NOT invent a bug or fabricate evidence. "
+                "State clearly that the request is ambiguous, explain what you checked in the repository, "
+                "and ask for specific details.\n"
+                "- When suggesting a fix, provide the minimal, safest correction. If product requirements "
+                "allow multiple valid choices (e.g. returning 0 vs raising ValueError vs returning None), "
+                "explain the trade-offs and what depends on product requirements.\n"
+                "Explain the likely root cause, cite concise supporting evidence, describe uncertainty, "
+                "and suggest a safe next step. You may only inspect the selected repository using the provided tools."
             ),
         },
         {
@@ -279,6 +358,7 @@ def run_investigation(
 
     # Return tool evidence to the frontend so the diagnosis can be reviewed.
     evidence = []
+    executed_tool_calls = {}
 
     for step in range(max_iterations):
         # Reserve the final model iteration for synthesis. The model can use
@@ -294,65 +374,39 @@ def run_investigation(
             request_kwargs["tools"] = [SEARCH_CODE_TOOL, READ_FILE_TOOL]
             request_kwargs["tool_choice"] = "auto"
 
-        try:
-            response = client.chat.completions.create(**request_kwargs)
-
-        except APIStatusError as exc:
-            _log_provider_error(exc)
-            raise RuntimeError(
-                f"The model provider returned HTTP {exc.status_code}. "
-                "Check the backend logs for provider diagnostics before retrying."
-            ) from exc
-
-        except APITimeoutError as exc:
-            logger.warning(
-                "Model request timed out after %s seconds; model=%s",
-                MODEL_REQUEST_TIMEOUT_SECONDS,
-                MODEL,
-            )
-            raise RuntimeError(
-                f"The model request timed out after "
-                f"{MODEL_REQUEST_TIMEOUT_SECONDS} seconds. "
-                "No automatic retry was attempted."
-            ) from exc
-
-        except APIConnectionError as exc:
-            logger.warning(
-                "Could not connect to model provider; error_type=%s",
-                type(exc).__name__,
-            )
-            raise RuntimeError(
-                "Could not connect to the model API. "
-                "Check the network and backend logs before retrying."
-            ) from exc
+        response = _call_model_with_retry(request_kwargs, evidence, step)
 
         # Defend against malformed or empty API responses before indexing choices.
         choices = getattr(response, "choices", None)
         if not choices:
-            raise RuntimeError("The model API returned no response choices.")
+            err = RuntimeError("The model API returned no response choices.")
+            err.evidence = list(evidence)
+            err.iterations = step + 1
+            raise err
 
         message = getattr(choices[0], "message", None)
         if message is None:
-            raise RuntimeError("The model API response did not contain a message.")
+            err = RuntimeError("The model API response did not contain a message.")
+            err.evidence = list(evidence)
+            err.iterations = step + 1
+            raise err
 
         # Tool-call IDs are required by the chat API's follow-up tool messages.
         response_tool_calls = getattr(message, "tool_calls", None) or []
-        if any(
-            not isinstance(getattr(call, "id", None), str)
-            or not getattr(call, "id", "").strip()
-            for call in response_tool_calls
-        ):
-            raise RuntimeError(
-                "The model returned a tool call without a valid ID."
-            )
+        for idx, call in enumerate(response_tool_calls):
+            if not isinstance(getattr(call, "id", None), str) or not getattr(call, "id", "").strip():
+                call.id = f"call_{step}_{idx}"
 
         # Keep the assistant message in the conversation, including tool calls.
         try:
             assistant_message = message.model_dump(exclude_none=True)
         except (AttributeError, TypeError, ValueError) as exc:
-            raise RuntimeError(
+            err = RuntimeError(
                 "The model API returned a message in an unsupported format."
-            ) from exc
+            )
+            err.evidence = list(evidence)
+            err.iterations = step + 1
+            raise err from exc
 
         messages.append(assistant_message)
 
@@ -373,8 +427,21 @@ def run_investigation(
                     "iterations": step + 1,
                 }
 
+            lower_ans = answer.lower()
+            insufficient_indicators = [
+                "request is too vague",
+                "request is ambiguous",
+                "could not find any bug",
+                "no bug or defect could be found",
+                "unable to identify",
+                "please clarify",
+                "more information is needed",
+            ]
+            is_incomplete = any(ind in lower_ans for ind in insufficient_indicators) and len(evidence) <= 2
+            status = "incomplete" if is_incomplete else "completed"
+
             return {
-                "status": "completed",
+                "status": status,
                 "repository_id": repository_id,
                 "repository_name": repository.get("name", repository_id),
                 "answer": answer,
@@ -387,34 +454,60 @@ def run_investigation(
             function = getattr(tool_call, "function", None)
             tool_name = getattr(function, "name", None) or "unknown_tool"
 
+            # Parse tool arguments to build a normalized cache key for deduplication.
+            cache_key = None
             try:
-                result = execute_tool(tool_call, repo_root=repo_root)
+                raw_args = json.loads(getattr(function, "arguments", "{}"))
+                if isinstance(raw_args, dict):
+                    cache_key = f"{tool_name}:{json.dumps(raw_args, sort_keys=True)}"
+            except Exception:
+                pass
 
-                # Convert results to text because tool messages require content.
-                if isinstance(result, str):
-                    result_text = result
-                else:
-                    result_text = json.dumps(
-                        result,
-                        ensure_ascii=False,
-                        default=str,
-                    )
-
+            if cache_key and cache_key in executed_tool_calls:
+                result_text = (
+                    f"Notice: The tool call '{tool_name}' with identical arguments "
+                    "was already executed earlier with result:\n"
+                    f"{executed_tool_calls[cache_key]}\n"
+                    "Do not repeat identical tool calls. Review the existing evidence above "
+                    "and proceed with your analysis or inspect callers/dependencies."
+                )
                 evidence.append({
                     "tool": tool_name,
-                    "status": "success",
+                    "status": "cached",
                     "result": result_text[:12000],
                 })
+            else:
+                try:
+                    result = execute_tool(tool_call, repo_root=repo_root)
 
-            except Exception as exc:
-                # Report tool failures to the model so it can adjust its search.
-                result_text = f"Tool error ({type(exc).__name__}): {exc}"
+                    # Convert results to text because tool messages require content.
+                    if isinstance(result, str):
+                        result_text = result
+                    else:
+                        result_text = json.dumps(
+                            result,
+                            ensure_ascii=False,
+                            default=str,
+                        )
 
-                evidence.append({
-                    "tool": tool_name,
-                    "status": "error",
-                    "result": result_text,
-                })
+                    evidence.append({
+                        "tool": tool_name,
+                        "status": "success",
+                        "result": result_text[:12000],
+                    })
+
+                    if cache_key:
+                        executed_tool_calls[cache_key] = result_text
+
+                except Exception as exc:
+                    # Report tool failures to the model so it can adjust its search.
+                    result_text = f"Tool error ({type(exc).__name__}): {exc}"
+
+                    evidence.append({
+                        "tool": tool_name,
+                        "status": "error",
+                        "result": result_text,
+                    })
 
             # Each tool call must receive a matching result message.
             messages.append({

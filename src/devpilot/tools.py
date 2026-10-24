@@ -1,5 +1,5 @@
 
-# pathlib.Path provides safe, cross-platform filesystem operations.
+import re
 from pathlib import Path
 
 # Directories that should never be searched or read by the agent.
@@ -61,7 +61,26 @@ def search_code(query: str, repo_root: str = ".") -> str:
     if root is None:
         return "Error: repository directory does not exist."
 
+    # Strip surrounding whitespace and unescape regex backslashes if present.
+    raw_query = query.strip()
+    clean_query = re.sub(r"\\([()[\]{}.*+?^$|\\])", r"\1", raw_query)
+
+    # Prepare search candidates: exact, unescaped, and snake_case for natural phrasing.
+    candidates = [raw_query.casefold()]
+    if clean_query.casefold() not in candidates:
+        candidates.append(clean_query.casefold())
+
+    # Fallback to snake_case if multiple words were queried (e.g. "normalize username" -> "normalize_username").
+    snake_candidate = None
+    if " " in clean_query:
+        snake = re.sub(r"\s+", "_", clean_query).casefold()
+        if snake not in candidates:
+            snake_candidate = snake
+
+    tokens = [t.casefold() for t in clean_query.split() if len(t) > 1] if " " in clean_query else []
+
     results = []
+    fallback_results = []
 
     # Search Python source recursively, skipping generated/vendor directories.
     for file_path in root.rglob("*.py"):
@@ -93,22 +112,37 @@ def search_code(query: str, repo_root: str = ".") -> str:
 
             # enumerate(start=1) gives actual source-file line numbers.
             for line_number, line in enumerate(content.splitlines(), start=1):
-                if query.casefold() in line.casefold():
+                line_cf = line.casefold()
+
+                # Primary search matches
+                if any(candidate in line_cf for candidate in candidates):
                     results.append(
                         f"{relative_path.as_posix()}:{line_number}: {line.rstrip()}"
                     )
-
-                    # Limit results to protect the model's context window.
                     if len(results) >= 20:
-                        return (
-                            f"Search query: {query}\n"
-                            "Matches (maximum 20):\n"
-                            + "\n".join(results)
+                        break
+                elif not results:
+                    # Collect fallback match if primary hasn't found anything yet
+                    if (snake_candidate and snake_candidate in line_cf) or (
+                        tokens and all(tok in line_cf for tok in tokens)
+                    ):
+                        fallback_results.append(
+                            f"{relative_path.as_posix()}:{line_number}: {line.rstrip()}"
                         )
+
+            if len(results) >= 20:
+                return (
+                    f"Search query: {query}\n"
+                    "Matches (maximum 20):\n"
+                    + "\n".join(results)
+                )
 
         # One unreadable file should not stop the entire search.
         except (OSError, ValueError):
             continue
+
+    if not results and fallback_results:
+        results = fallback_results[:20]
 
     if not results:
         return f"No matches found for: {query}"

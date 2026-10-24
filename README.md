@@ -239,7 +239,7 @@ pytest -q
 The latest recorded test result during development was:
 
 ```text
-53 passed, 1 skipped
+61 passed, 1 skipped
 ```
 
 This is a historical development result, not a guarantee that every environment or future revision will produce the same result.

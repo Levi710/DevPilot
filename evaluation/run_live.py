@@ -11,7 +11,7 @@ from urllib.request import Request, urlopen
 
 EVALUATION_DIR = Path(__file__).resolve().parent
 API_BASE_URL = "http://127.0.0.1:8000"
-REQUEST_TIMEOUT_SECONDS = 180
+REQUEST_TIMEOUT_SECONDS = 300
 OUTPUT_PATH = EVALUATION_DIR / "live_results.json"
 
 if str(EVALUATION_DIR) not in sys.path:

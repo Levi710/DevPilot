@@ -154,6 +154,25 @@ def create_investigation(request: InvestigationRequest):
         ) from exc
 
     except RuntimeError as exc:
+        # Save the failed investigation so history and database reflect the failure.
+        try:
+            save_investigation(
+                repository_id=request.repository_id,
+                repository_name=repository.get(
+                    "name",
+                    request.repository_id,
+                ) if repository else request.repository_id,
+                description=description,
+                result={
+                    "status": "failed",
+                    "answer": f"Investigation failed: {exc}",
+                    "evidence": getattr(exc, "evidence", []),
+                    "iterations": getattr(exc, "iterations", None),
+                },
+            )
+        except Exception:
+            pass
+
         raise HTTPException(
             status_code=502,
             detail=str(exc),

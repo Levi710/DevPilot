@@ -160,6 +160,7 @@ function App() {
   function historyStatus(status) {
     if (status === "completed") return "Completed";
     if (status === "incomplete") return "Incomplete";
+    if (status === "failed") return "Failed";
     return formatStatus(status);
   }
 
@@ -548,7 +549,9 @@ function App() {
                         <h2>
                           {investigationResult.status === "completed"
                             ? "Findings"
-                            : "Investigation incomplete"}
+                            : investigationResult.status === "failed"
+                              ? "Investigation failed"
+                              : "Investigation incomplete"}
                         </h2>
                       </div>
 
@@ -556,10 +559,12 @@ function App() {
                         className={`history-status ${
                           investigationResult.status === "completed"
                             ? "resolved"
-                            : ""
+                            : investigationResult.status === "failed"
+                              ? "failed"
+                              : "incomplete"
                         }`}
                       >
-                        {formatStatus(investigationResult.status)}
+                        {historyStatus(investigationResult.status)}
                       </span>
                     </div>
 
@@ -656,7 +661,7 @@ function App() {
                   {recentInvestigations.slice(0, 5).map((item) => (
                     <article className="history-item" key={item.id}>
                       <div className="history-icon">
-                        {item.status === "completed" ? "✓" : "↗"}
+                        {item.status === "completed" ? "✓" : item.status === "failed" ? "✗" : "↗"}
                       </div>
                       <div className="history-title">
                         <strong>{historyTitle(item)}</strong>
@@ -666,7 +671,11 @@ function App() {
                       </div>
                       <span
                         className={`history-status ${
-                          item.status === "completed" ? "resolved" : ""
+                          item.status === "completed"
+                            ? "resolved"
+                            : item.status === "failed"
+                              ? "failed"
+                              : "incomplete"
                         }`}
                       >
                         {historyStatus(item.status)}
@@ -802,7 +811,11 @@ function App() {
                       </div>
                       <span
                         className={`history-status ${
-                          item.status === "completed" ? "resolved" : ""
+                          item.status === "completed"
+                            ? "resolved"
+                            : item.status === "failed"
+                              ? "failed"
+                              : "incomplete"
                         }`}
                       >
                         {historyStatus(item.status)}

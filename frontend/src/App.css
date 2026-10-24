@@ -605,6 +605,18 @@ textarea::placeholder {
   border-color: #254637;
 }
 
+.history-status.incomplete {
+  color: #f7c948;
+  background: #2b2311;
+  border-color: #534219;
+}
+
+.history-status.failed {
+  color: #ff8389;
+  background: #2c1518;
+  border-color: #5c242b;
+}
+
 .history-arrow {
   color: #858ba0;
 }
