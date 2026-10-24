@@ -1,0 +1,56 @@
+
+# Secrets and environment configuration
+.env
+.env.*
+!.env.example
+
+# Python virtual environments
+.venv/
+venv/
+env/
+
+# Python cache and compiled files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Testing and coverage
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+
+# Build and packaging
+build/
+dist/
+*.egg-info/
+
+# Node.js and frontend builds
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+
+# Local databases and generated state
+*.sqlite
+*.sqlite3
+*.db
+src/devpilot/repositories.json
+
+# Generated evaluation output
+evaluation/live_results.json
+
+# Local logs
+*.log
+
+# IDE and operating system files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Temporary files
+.python-version
+*.tmp
+*.bak

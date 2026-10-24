@@ -1,0 +1,846 @@
+
+import { useEffect, useRef, useState } from "react";
+import "./App.css";
+// Render AI investigation reports as Markdown.
+import ReactMarkdown from "react-markdown";
+
+// Support GitHub-style Markdown, including tables and task lists.
+import remarkGfm from "remark-gfm";
+
+// Centralize the API URL so it can later move into a Vite environment variable.
+const API_BASE_URL = "http://127.0.0.1:8000";
+
+function App() {
+  const [page, setPage] = useState("Overview");
+
+  // Repository data is loaded from the real backend.
+  const [repositories, setRepositories] = useState([]);
+  const [repositoriesLoading, setRepositoriesLoading] = useState(true);
+  const [repositoryError, setRepositoryError] = useState("");
+
+  // Investigation history is loaded from the SQLite-backed API.
+  const [recentInvestigations, setRecentInvestigations] = useState([]);
+  const [historyLoading, setHistoryLoading] = useState(true);
+  const [historyError, setHistoryError] = useState("");
+
+  const [repoId, setRepoId] = useState("");
+  const [description, setDescription] = useState("");
+
+  // Screenshot selection is currently only a browser-side preview.
+  const [image, setImage] = useState(null);
+  const fileInput = useRef(null);
+
+  // Track the actual investigation request and its response.
+  const [investigating, setInvestigating] = useState(false);
+  const [investigationResult, setInvestigationResult] = useState(null);
+  const [investigationError, setInvestigationError] = useState("");
+
+  // Load the registered repositories when the app opens.
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadRepositories() {
+      try {
+        setRepositoriesLoading(true);
+        setRepositoryError("");
+
+        const response = await fetch(
+          `${API_BASE_URL}/api/repositories`
+        );
+
+        if (!response.ok) {
+          throw new Error(`Backend returned HTTP ${response.status}`);
+        }
+
+        const data = await response.json();
+
+        if (!Array.isArray(data.repositories)) {
+          throw new Error("Invalid repository list returned by the API.");
+        }
+
+        if (cancelled) return;
+
+        setRepositories(data.repositories);
+
+        // Prefer the existing selection if it remains registered and connected.
+        setRepoId((currentId) => {
+          const currentRepo = data.repositories.find(
+            (repo) =>
+              repo.repository_id === currentId &&
+              repo.status === "connected"
+          );
+
+          if (currentRepo) return currentId;
+
+          const firstConnected = data.repositories.find(
+            (repo) => repo.status === "connected"
+          );
+
+          return firstConnected?.repository_id ?? "";
+        });
+      } catch (error) {
+        if (!cancelled) {
+          setRepositoryError(
+            error instanceof Error
+              ? error.message
+              : "Could not load repositories."
+          );
+        }
+      } finally {
+        if (!cancelled) {
+          setRepositoriesLoading(false);
+        }
+      }
+    }
+
+    loadRepositories();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Load real saved investigations from the backend.
+  async function loadInvestigations() {
+    try {
+      setHistoryLoading(true);
+      setHistoryError("");
+
+      const response = await fetch(
+        `${API_BASE_URL}/api/investigations?limit=50`
+      );
+
+      if (!response.ok) {
+        throw new Error(`History API returned HTTP ${response.status}`);
+      }
+
+      const data = await response.json();
+
+      if (!Array.isArray(data.investigations)) {
+        throw new Error("Invalid investigation history returned by the API.");
+      }
+
+      setRecentInvestigations(data.investigations);
+    } catch (error) {
+      setHistoryError(
+        error instanceof Error
+          ? error.message
+          : "Could not load investigation history."
+      );
+    } finally {
+      setHistoryLoading(false);
+    }
+  }
+
+  // Load history when the app opens.
+  useEffect(() => {
+    loadInvestigations();
+  }, []);
+
+  // Format saved timestamps for display in the history lists.
+  function formatHistoryTime(timestamp) {
+    if (!timestamp) return "Time unavailable";
+
+    const date = new Date(timestamp);
+
+    if (Number.isNaN(date.getTime())) {
+      return "Time unavailable";
+    }
+
+    return date.toLocaleString();
+  }
+
+  // Use the bug description as the history title.
+  function historyTitle(item) {
+    const title = (item.description || "Untitled investigation").trim();
+    return title.length > 90 ? `${title.slice(0, 87)}...` : title;
+  }
+
+  // Normalize backend statuses for the existing UI labels.
+  function historyStatus(status) {
+    if (status === "completed") return "Completed";
+    if (status === "incomplete") return "Incomplete";
+    return formatStatus(status);
+  }
+
+  // Release the preview URL when an image is replaced or the app unmounts.
+  useEffect(() => {
+    return () => {
+      if (image?.previewUrl) {
+        URL.revokeObjectURL(image.previewUrl);
+      }
+    };
+  }, [image]);
+
+  const selectedRepo = repositories.find(
+    (repo) => repo.repository_id === repoId
+  );
+
+  // Clear stale results whenever the user changes investigation inputs.
+  function clearResult() {
+    setInvestigationResult(null);
+    setInvestigationError("");
+  }
+
+  function handleImageChange(event) {
+    const file = event.target.files?.[0];
+
+    if (!file) return;
+
+    if (!file.type.startsWith("image/")) {
+      alert("Please choose an image file.");
+      event.target.value = "";
+      return;
+    }
+
+    if (file.size > 10 * 1024 * 1024) {
+      alert("Choose an image smaller than 10 MB.");
+      event.target.value = "";
+      return;
+    }
+
+    setImage({
+      file,
+      previewUrl: URL.createObjectURL(file),
+    });
+
+    clearResult();
+  }
+
+  function handleRemoveImage() {
+    setImage(null);
+
+    if (fileInput.current) {
+      fileInput.current.value = "";
+    }
+
+    clearResult();
+  }
+
+  // Send the bug report to FastAPI and wait for the real agent response.
+  async function handleSubmit(event) {
+    event.preventDefault();
+    clearResult();
+
+    if (repositoriesLoading) {
+      setInvestigationError("Wait for the repository list to load.");
+      return;
+    }
+
+    if (repositoryError) {
+      setInvestigationError(
+        "The backend repository list is unavailable. Check FastAPI and retry."
+      );
+      return;
+    }
+
+    if (!selectedRepo || selectedRepo.status !== "connected") {
+      setInvestigationError("Select a connected repository first.");
+      return;
+    }
+
+    if (!description.trim()) {
+      setInvestigationError(
+        image
+          ? "Screenshot analysis is not connected yet. Please describe the bug in text."
+          : "Describe the bug before starting an investigation."
+      );
+      return;
+    }
+
+    setInvestigating(true);
+
+    try {
+      // The current backend accepts text only. The screenshot is not uploaded.
+      const response = await fetch(
+        `${API_BASE_URL}/api/investigations`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            repository_id: repoId,
+            description: description.trim(),
+          }),
+        }
+      );
+
+      const data = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        const message =
+          typeof data.detail === "string"
+            ? data.detail
+            : `Investigation failed with HTTP ${response.status}.`;
+
+        throw new Error(message);
+      }
+
+      setInvestigationResult(data);
+
+      // The API saves the report before returning; refresh the history list.
+      await loadInvestigations();
+    } catch (error) {
+      setInvestigationError(
+        error instanceof Error
+          ? error.message
+          : "An unexpected investigation error occurred."
+      );
+    } finally {
+      setInvestigating(false);
+    }
+  }
+
+  function formatStatus(status) {
+    if (!status) return "Unknown";
+    return status.charAt(0).toUpperCase() + status.slice(1);
+  }
+
+  return (
+    <div className="app-shell">
+      <aside className="sidebar">
+        <a
+          className="brand"
+          href="#home"
+          onClick={(event) => {
+            event.preventDefault();
+            setPage("Overview");
+          }}
+        >
+          <span className="brand-icon">D</span>
+          <span>
+            <strong>DevPilot</strong>
+            <small>AI debugging workspace</small>
+          </span>
+        </a>
+
+        <p className="nav-label">WORKSPACE</p>
+
+        {["Overview", "Investigations", "Repositories"].map((item) => (
+          <button
+            key={item}
+            className={`nav-item ${page === item ? "active" : ""}`}
+            onClick={() => setPage(item)}
+          >
+            <span className="nav-dot" />
+            {item}
+          </button>
+        ))}
+
+        <div className="sidebar-bottom">
+          <div className="connection-card">
+            <span className="status-dot" />
+            <div>
+              <strong>Agent workspace</strong>
+              <small>
+                {repositoryError
+                  ? "Backend connection issue"
+                  : repositoriesLoading
+                    ? "Connecting to backend..."
+                    : "Repository API connected"}
+              </small>
+            </div>
+          </div>
+          <p className="muted tiny">DevPilot · Early access</p>
+        </div>
+      </aside>
+
+      <main className="main-content">
+        <header className="topbar">
+          <div className="breadcrumbs">
+            Workspace <span>/</span> {page}
+          </div>
+          <div className="user-avatar" title="Your workspace">A</div>
+        </header>
+
+        <div className="page-container">
+          {page === "Overview" && (
+            <>
+              <section className="welcome-row">
+                <div>
+                  <p className="eyebrow">YOUR DEVELOPMENT WORKSPACE</p>
+                  <h1>
+                    Find the bug.
+                    <br />
+                    Understand the fix.
+                  </h1>
+                  <p className="subtitle">
+                    Give DevPilot an error screenshot or description.
+                    Start with evidence, finish with a verified solution.
+                  </p>
+                </div>
+
+                <div className="hero-symbol" aria-hidden="true">
+                  <span>⌘</span>
+                  <i />
+                </div>
+              </section>
+
+              <section className="panel investigation-panel">
+                <div className="panel-heading">
+                  <div>
+                    <p className="eyebrow">NEW INVESTIGATION</p>
+                    <h2>What are we debugging?</h2>
+                  </div>
+                  <span className="step-label">STEP 01</span>
+                </div>
+
+                <form onSubmit={handleSubmit}>
+                  <label className="field-label" htmlFor="repository">
+                    Repository
+                  </label>
+
+                  <select
+                    id="repository"
+                    value={repoId}
+                    onChange={(event) => {
+                      setRepoId(event.target.value);
+                      clearResult();
+                    }}
+                    disabled={repositoriesLoading || repositories.length === 0}
+                  >
+                    {repositoriesLoading && (
+                      <option value="">Loading repositories...</option>
+                    )}
+
+                    {!repositoriesLoading && repositories.length === 0 && (
+                      <option value="">No repositories available</option>
+                    )}
+
+                    {repositories.map((repo) => (
+                      <option
+                        key={repo.repository_id}
+                        value={repo.repository_id}
+                        disabled={repo.status !== "connected"}
+                      >
+                        {repo.name} · {repo.source_type}
+                        {repo.status !== "connected" ? " (Unavailable)" : ""}
+                      </option>
+                    ))}
+                  </select>
+
+                  <div className="repo-note">
+                    <span className="status-dot" />
+                    {repositoriesLoading
+                      ? "Loading registered repositories..."
+                      : repositoryError
+                        ? "Could not retrieve repositories"
+                        : selectedRepo
+                          ? `${selectedRepo.name} · ${formatStatus(selectedRepo.status)}`
+                          : "No connected repository found"}
+                  </div>
+
+                  {repositoryError && (
+                    <p className="error-message" role="alert">
+                      Could not load repositories: {repositoryError}
+                    </p>
+                  )}
+
+                  <label className="field-label" htmlFor="bug-description">
+                    Describe the problem
+                  </label>
+
+                  <textarea
+                    id="bug-description"
+                    rows="4"
+                    placeholder="What happened? What did you expect instead? Paste an error message if you have one..."
+                    value={description}
+                    onChange={(event) => {
+                      setDescription(event.target.value);
+                      clearResult();
+                    }}
+                  />
+
+                  <div className="upload-area">
+                    <input
+                      ref={fileInput}
+                      type="file"
+                      accept="image/*"
+                      capture="environment"
+                      hidden
+                      onChange={handleImageChange}
+                    />
+
+                    {image ? (
+                      <div className="image-preview">
+                        <img
+                          src={image.previewUrl}
+                          alt="Bug screenshot preview"
+                        />
+
+                        <div className="image-info">
+                          <strong>{image.file.name}</strong>
+                          <small>
+                            {(image.file.size / 1024).toFixed(0)} KB ·
+                            Local preview only
+                          </small>
+
+                          <button
+                            type="button"
+                            className="text-button"
+                            onClick={handleRemoveImage}
+                          >
+                            Remove image
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        className="upload-trigger"
+                        onClick={() => fileInput.current?.click()}
+                      >
+                        <span className="upload-icon">↑</span>
+                        <span>
+                          <strong>Attach a screenshot</strong>
+                          <small>
+                            Browse files or use your phone camera · Max 10 MB
+                          </small>
+                        </span>
+                        <span className="upload-plus">+</span>
+                      </button>
+                    )}
+                  </div>
+
+                  <div className="form-footer">
+                    <span className="muted tiny">
+                      The agent currently analyzes text reports only.
+                    </span>
+
+                    <button
+                      className="primary-button"
+                      type="submit"
+                      disabled={
+                        investigating ||
+                        repositoriesLoading ||
+                        Boolean(repositoryError) ||
+                        !selectedRepo ||
+                        selectedRepo.status !== "connected"
+                      }
+                    >
+                      {investigating ? "Investigating..." : "Investigate bug"}
+                      <span>{investigating ? "…" : "↗"}</span>
+                    </button>
+                  </div>
+                </form>
+
+                {investigating && (
+                  <div className="demo-notice" role="status" aria-live="polite">
+                    <strong>Investigation in progress.</strong> DevPilot is
+                    searching the selected repository and analyzing relevant
+                    source files. This may take a little while.
+                  </div>
+                )}
+
+                {investigationError && (
+                  <div className="error-message" role="alert">
+                    <strong>Investigation failed.</strong>{" "}
+                    {investigationError}
+                  </div>
+                )}
+
+                {investigationResult && (
+                  <section className="section-block" aria-live="polite">
+                    <div className="section-heading">
+                      <div>
+                        <p className="eyebrow">INVESTIGATION RESULTS</p>
+                        <h2>
+                          {investigationResult.status === "completed"
+                            ? "Findings"
+                            : "Investigation incomplete"}
+                        </h2>
+                      </div>
+
+                      <span
+                        className={`history-status ${
+                          investigationResult.status === "completed"
+                            ? "resolved"
+                            : ""
+                        }`}
+                      >
+                        {formatStatus(investigationResult.status)}
+                      </span>
+                    </div>
+
+                    <p className="muted tiny">
+                      Repository:{" "}
+                      {investigationResult.repository_name || repoId}
+                      {" · "}
+                      Agent iterations: {investigationResult.iterations ?? "—"}
+                    </p>
+
+                    <article className="panel result-panel">
+                      <h3>Analysis</h3>
+
+                      {/* Render the investigation report as formatted Markdown. */}
+                      <div className="investigation-answer">
+                        <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                          {investigationResult.answer}
+                        </ReactMarkdown>
+                      </div>
+                    </article>
+
+                    <div className="section-heading">
+                      <div>
+                        <p className="eyebrow">SOURCE EVIDENCE</p>
+                        <h2>Tool activity</h2>
+                      </div>
+                    </div>
+
+                    {Array.isArray(investigationResult.evidence) &&
+                    investigationResult.evidence.length > 0 ? (
+                      <div className="history-list">
+                        {investigationResult.evidence.map((item, index) => (
+                          <details className="history-item" key={`${item.tool}-${index}`}>
+                            <summary>
+                              <div className="history-title">
+                                <strong>{item.tool}</strong>
+                                <small>
+                                  {formatStatus(item.status)}
+                                </small>
+                              </div>
+                            </summary>
+
+                            <pre className="investigation-answer">
+                              {item.result}
+                            </pre>
+                          </details>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="muted">
+                        The agent did not return tool evidence.
+                      </p>
+                    )}
+
+                    <p className="muted tiny">
+                      These are model-generated findings based on returned
+                      evidence. Tests have not been run and no files were
+                      modified.
+                    </p>
+                  </section>
+                )}
+              </section>
+
+              <section className="section-block">
+                <div className="section-heading">
+                  <div>
+                    <p className="eyebrow">WORK HISTORY</p>
+                    <h2>Recent investigations</h2>
+                  </div>
+
+                  <button
+                    className="text-button"
+                    onClick={() => setPage("Investigations")}
+                  >
+                    View all →
+                  </button>
+                </div>
+
+                {historyLoading && (
+                  <p className="muted" role="status">Loading investigation history...</p>
+                )}
+
+                {historyError && (
+                  <p className="error-message" role="alert">
+                    Could not load investigation history: {historyError}
+                  </p>
+                )}
+
+                {!historyLoading && !historyError && recentInvestigations.length === 0 && (
+                  <p className="muted">No investigations saved yet. Run your first investigation above.</p>
+                )}
+
+                <div className="history-list">
+                  {recentInvestigations.slice(0, 5).map((item) => (
+                    <article className="history-item" key={item.id}>
+                      <div className="history-icon">
+                        {item.status === "completed" ? "✓" : "↗"}
+                      </div>
+                      <div className="history-title">
+                        <strong>{historyTitle(item)}</strong>
+                        <small>
+                          {item.repository_name || item.repository_id} · {formatHistoryTime(item.created_at)}
+                        </small>
+                      </div>
+                      <span
+                        className={`history-status ${
+                          item.status === "completed" ? "resolved" : ""
+                        }`}
+                      >
+                        {historyStatus(item.status)}
+                      </span>
+                      <span className="history-arrow">→</span>
+                    </article>
+                  ))}
+                </div>
+              </section>
+            </>
+          )}
+
+          {page === "Repositories" && (
+            <section className="section-block">
+              <p className="eyebrow">PROJECT ACCESS</p>
+              <h1>Repositories</h1>
+              <p className="subtitle">
+                View repositories registered in the DevPilot backend.
+              </p>
+
+              {repositoriesLoading && (
+                <p role="status">Loading repositories...</p>
+              )}
+
+              {repositoryError && (
+                <p className="error-message" role="alert">
+                  Could not load repositories: {repositoryError}
+                </p>
+              )}
+
+              {!repositoriesLoading &&
+                !repositoryError &&
+                repositories.length === 0 && (
+                  <p className="muted">No repositories are registered yet.</p>
+                )}
+
+              <div className="repository-list">
+                {repositories.map((repo) => (
+                  <button
+                    key={repo.repository_id}
+                    className={`repository-card ${
+                      repoId === repo.repository_id ? "selected" : ""
+                    }`}
+                    disabled={repo.status !== "connected"}
+                    onClick={() => {
+                      setRepoId(repo.repository_id);
+                      setPage("Overview");
+                      clearResult();
+                    }}
+                  >
+                    <div className="repository-icon">
+                      {repo.source_type?.toLowerCase() === "github"
+                        ? "GH"
+                        : "⌘"}
+                    </div>
+
+                    <div>
+                      <strong>{repo.name}</strong>
+                      <small>
+                        {repo.source_type} · ID: {repo.repository_id}
+                      </small>
+                    </div>
+
+                    <span
+                      className={`history-status ${
+                        repo.status === "connected" ? "resolved" : ""
+                      }`}
+                    >
+                      {formatStatus(repo.status)}
+                    </span>
+                  </button>
+                ))}
+              </div>
+
+              <button
+                className="text-button"
+                type="button"
+                onClick={() => window.location.reload()}
+              >
+                Refresh repository data ↻
+              </button>
+            </section>
+          )}
+
+          {page === "Investigations" && (
+            <section className="section-block">
+              <p className="eyebrow">INVESTIGATION LOG</p>
+              <h1>Investigations</h1>
+              <p className="subtitle">
+                Review previous bug reports and their outcomes.
+              </p>
+
+              <div className="section-heading">
+                <div>
+                  <p className="muted tiny">
+                    {recentInvestigations.length} saved investigation
+                    {recentInvestigations.length === 1 ? "" : "s"}
+                  </p>
+                </div>
+                <button
+                  className="text-button"
+                  type="button"
+                  onClick={loadInvestigations}
+                  disabled={historyLoading}
+                >
+                  {historyLoading ? "Refreshing..." : "Refresh history ↻"}
+                </button>
+              </div>
+
+              {historyError && (
+                <p className="error-message" role="alert">
+                  Could not load investigation history: {historyError}
+                </p>
+              )}
+
+              {historyLoading && (
+                <p className="muted" role="status">Loading investigation history...</p>
+              )}
+
+              {!historyLoading && !historyError && recentInvestigations.length === 0 && (
+                <p className="muted">No saved investigations yet.</p>
+              )}
+
+              <div className="history-list">
+                {recentInvestigations.map((item) => (
+                  <details className="history-item" key={item.id}>
+                    <summary>
+                      <div className="history-title">
+                        <strong>{historyTitle(item)}</strong>
+                        <small>
+                          {item.repository_name || item.repository_id} · {formatHistoryTime(item.created_at)}
+                        </small>
+                      </div>
+                      <span
+                        className={`history-status ${
+                          item.status === "completed" ? "resolved" : ""
+                        }`}
+                      >
+                        {historyStatus(item.status)}
+                      </span>
+                    </summary>
+
+                    <div className="history-detail">
+                      <p><strong>Repository:</strong> {item.repository_name || item.repository_id}</p>
+                      <p><strong>Report:</strong></p>
+                      <div className="investigation-answer">
+                        <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                          {item.answer || "No report text was saved."}
+                        </ReactMarkdown>
+                      </div>
+
+                      <p><strong>Source evidence</strong></p>
+                      {Array.isArray(item.evidence) && item.evidence.length > 0 ? (
+                        item.evidence.map((evidence, index) => (
+                          <details className="history-item" key={`${item.id}-${evidence.tool}-${index}`}>
+                            <summary>
+                              {evidence.tool} · {formatStatus(evidence.status)}
+                            </summary>
+                            <pre className="investigation-answer">{evidence.result}</pre>
+                          </details>
+                        ))
+                      ) : (
+                        <p className="muted">No evidence was saved for this report.</p>
+                      )}
+                    </div>
+                  </details>
+                ))}
+              </div>
+            </section>
+          )}
+        </div>
+      </main>
+    </div>
+  );
+}
+
+export default App;

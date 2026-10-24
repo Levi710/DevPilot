@@ -1,0 +1,1065 @@
+
+/* Define the shared colors and spacing for DevPilot's dark theme. */
+:root {
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, sans-serif;
+  color: #e9edf5;
+  background: #0b0d12;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+
+  --surface: #11141c;
+  --surface-raised: #171b25;
+  --border: #262b38;
+  --muted: #9299aa;
+  --accent: #9b8cff;
+  --accent-soft: #201c39;
+  --green: #62d6a4;
+}
+
+/* Use predictable sizing throughout the interface. */
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+button:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+
+.app-shell {
+  min-height: 100vh;
+}
+
+/* Keep navigation separate from the main content on desktop. */
+.sidebar {
+  width: 250px;
+  position: fixed;
+  inset: 0 auto 0 0;
+  display: flex;
+  flex-direction: column;
+  padding: 27px 18px;
+  background: #0e1016;
+  border-right: 1px solid var(--border);
+  z-index: 5;
+}
+
+.brand {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  color: inherit;
+  text-decoration: none;
+  padding: 0 8px;
+  margin-bottom: 48px;
+}
+
+.brand-icon {
+  width: 39px;
+  height: 39px;
+  display: grid;
+  place-items: center;
+  border-radius: 12px;
+  color: white;
+  font-size: 21px;
+  font-weight: 800;
+  background: linear-gradient(140deg, #aa9aff, #6953e8);
+}
+
+.brand strong,
+.brand small,
+.connection-card strong,
+.connection-card small {
+  display: block;
+}
+
+.brand strong {
+  font-size: 15px;
+  letter-spacing: -0.4px;
+}
+
+.brand small,
+.connection-card small {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.nav-label,
+.eyebrow {
+  color: #858ba0;
+  font-size: 10px;
+  font-weight: 750;
+  letter-spacing: 1.5px;
+}
+
+.nav-label {
+  padding-left: 10px;
+  margin-bottom: 12px;
+}
+
+.nav-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 12px;
+  margin-bottom: 5px;
+  color: #a6adbd;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  text-align: left;
+  font-size: 13px;
+}
+
+.nav-item:hover,
+.nav-item.active {
+  background: #1a1d29;
+  color: #f0edff;
+}
+
+.nav-item.active {
+  border-color: #302a4c;
+}
+
+.nav-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 3px;
+  background: #626a7d;
+}
+
+.nav-item.active .nav-dot {
+  background: var(--accent);
+  box-shadow: 0 0 12px #9b8cff66;
+}
+
+.sidebar-bottom {
+  margin-top: auto;
+}
+
+.connection-card {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  padding: 14px 10px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.connection-card strong {
+  font-size: 11px;
+}
+
+.status-dot {
+  display: inline-block;
+  flex-shrink: 0;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--green);
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.tiny {
+  font-size: 10px;
+  line-height: 1.6;
+}
+
+.sidebar-bottom > p {
+  padding-left: 3px;
+}
+
+/* Header and content occupy the area beside the fixed sidebar. */
+.main-content {
+  margin-left: 250px;
+  min-height: 100vh;
+}
+
+.topbar {
+  height: 70px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 5%;
+  border-bottom: 1px solid var(--border);
+  background: #0b0d12;
+}
+
+.breadcrumbs {
+  color: #b2b8c8;
+  font-size: 12px;
+}
+
+.breadcrumbs span {
+  margin: 0 9px;
+  color: #555c6b;
+}
+
+.user-avatar {
+  width: 33px;
+  height: 33px;
+  display: grid;
+  place-items: center;
+  color: #ddd6ff;
+  background: #28233f;
+  border: 1px solid #454064;
+  border-radius: 50%;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.page-container {
+  width: min(100%, 1080px);
+  padding: 44px 5% 70px;
+  margin: 0 auto;
+}
+
+.welcome-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 30px;
+  margin-bottom: 35px;
+}
+
+.eyebrow {
+  margin: 0 0 12px;
+}
+
+h1,
+h2,
+p {
+  overflow-wrap: anywhere;
+}
+
+h1 {
+  margin: 0;
+  font-size: clamp(32px, 4vw, 48px);
+  letter-spacing: -2px;
+  line-height: 1.1;
+}
+
+h2 {
+  margin: 0;
+  font-size: 19px;
+  letter-spacing: -0.5px;
+}
+
+.subtitle {
+  max-width: 570px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.8;
+  margin: 15px 0 0;
+}
+
+.hero-symbol {
+  position: relative;
+  width: 105px;
+  height: 105px;
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  border: 1px solid #36304f;
+  border-radius: 28px;
+  background: radial-gradient(circle at 35% 20%, #282341, #14141e 75%);
+  color: #c2b7ff;
+}
+
+.hero-symbol span {
+  font-size: 45px;
+  font-weight: 300;
+}
+
+.hero-symbol i {
+  position: absolute;
+  right: -5px;
+  top: -5px;
+  width: 13px;
+  height: 13px;
+  background: var(--green);
+  border: 3px solid #0b0d12;
+  border-radius: 50%;
+}
+
+/* Main investigation card and its form controls. */
+.panel {
+  padding: 28px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 15px;
+}
+
+.panel-heading,
+.section-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 15px;
+}
+
+.panel-heading {
+  margin-bottom: 28px;
+}
+
+.step-label {
+  color: #a99cff;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 1px;
+}
+
+.field-label {
+  display: block;
+  margin: 20px 0 9px;
+  color: #d8dcea;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+select,
+textarea {
+  width: 100%;
+  color: #e8eaf2;
+  background: #0d1017;
+  border: 1px solid #303546;
+  border-radius: 8px;
+  padding: 12px 13px;
+  font-size: 12px;
+}
+
+select {
+  min-height: 43px;
+}
+
+textarea {
+  resize: vertical;
+  line-height: 1.7;
+  min-height: 115px;
+}
+
+textarea::placeholder {
+  color: #70788b;
+}
+
+.repo-note {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 10px;
+  margin-top: 9px;
+}
+
+.upload-area {
+  margin-top: 18px;
+}
+
+.upload-trigger {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  padding: 16px;
+  text-align: left;
+  color: inherit;
+  background: #0e1017;
+  border: 1px dashed #3a4052;
+  border-radius: 9px;
+}
+
+.upload-trigger:hover {
+  border-color: var(--accent);
+  background: #141321;
+}
+
+.upload-icon,
+.upload-plus {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 35px;
+  height: 35px;
+  border-radius: 8px;
+  background: var(--accent-soft);
+  color: #c5baff;
+  font-size: 20px;
+}
+
+.upload-trigger strong,
+.upload-trigger small {
+  display: block;
+}
+
+.upload-trigger strong {
+  font-size: 12px;
+}
+
+.upload-trigger small {
+  color: var(--muted);
+  margin-top: 5px;
+  font-size: 10px;
+}
+
+.upload-plus {
+  margin-left: auto;
+  background: transparent;
+  color: #969db0;
+}
+
+.image-preview {
+  display: flex;
+  gap: 14px;
+  align-items: center;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+}
+
+.image-preview img {
+  width: 90px;
+  height: 75px;
+  object-fit: cover;
+  border-radius: 6px;
+}
+
+.image-info {
+  min-width: 0;
+}
+
+.image-info strong,
+.image-info small {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.image-info strong {
+  font-size: 12px;
+}
+
+.image-info small {
+  margin-top: 5px;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.form-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 15px;
+  margin-top: 22px;
+}
+
+.primary-button {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  padding: 12px 17px;
+  color: white;
+  background: #7965e9;
+  border: 1px solid #8c7bf5;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.primary-button:hover {
+  background: #8b79f4;
+}
+
+.primary-button span {
+  font-size: 16px;
+}
+
+.demo-notice {
+  padding: 13px;
+  margin-top: 18px;
+  color: #e3d9ff;
+  background: #201c35;
+  border: 1px solid #413668;
+  border-radius: 8px;
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+/* Reusable list styles for recent work and repositories. */
+.section-block {
+  margin-top: 42px;
+}
+
+.section-heading {
+  margin-bottom: 18px;
+}
+
+.text-button {
+  padding: 5px 0;
+  color: #b5a9ff;
+  background: transparent;
+  border: 0;
+  font-size: 11px;
+}
+
+.text-button:hover {
+  color: white;
+  text-decoration: underline;
+}
+
+.history-list,
+.repository-list {
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 11px;
+  background: var(--surface);
+}
+
+.history-item,
+.repository-card {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  padding: 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.history-item:last-child,
+.repository-card:last-child {
+  border-bottom: 0;
+}
+
+.history-icon,
+.repository-icon {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 35px;
+  height: 35px;
+  color: #b9adff;
+  background: var(--accent-soft);
+  border-radius: 9px;
+}
+
+.history-title {
+  flex: 1;
+  min-width: 0;
+}
+
+.history-title strong,
+.history-title small,
+.repository-card strong,
+.repository-card small {
+  display: block;
+}
+
+.history-title strong,
+.repository-card strong {
+  font-size: 12px;
+}
+
+.history-title small,
+.repository-card small {
+  margin-top: 5px;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.history-status {
+  padding: 6px 8px;
+  color: #d8d2ff;
+  background: #211e33;
+  border: 1px solid #37304f;
+  border-radius: 6px;
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.history-status.resolved {
+  color: #81e5b8;
+  background: #14271f;
+  border-color: #254637;
+}
+
+.history-arrow {
+  color: #858ba0;
+}
+
+.demo-caption {
+  margin-top: 10px;
+}
+
+.repository-list {
+  margin-top: 25px;
+}
+
+.repository-card {
+  width: 100%;
+  text-align: left;
+  color: inherit;
+  background: transparent;
+}
+
+.repository-card:hover,
+.repository-card.selected {
+  background: #181625;
+}
+
+.repository-card > div:nth-child(2) {
+  flex: 1;
+  min-width: 0;
+}
+
+/* Switch to a compact, single-column layout on phones. */
+@media (max-width: 760px) {
+  .sidebar {
+    position: sticky;
+    top: 0;
+    width: 100%;
+    height: auto;
+    padding: 12px 15px;
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .brand {
+    margin: 0;
+    padding: 0;
+  }
+
+  .brand-icon {
+    width: 34px;
+    height: 34px;
+  }
+
+  .brand small,
+  .nav-label,
+  .sidebar-bottom,
+  .hero-symbol {
+    display: none;
+  }
+
+  .sidebar > .nav-item {
+    width: auto;
+    padding: 9px;
+    margin: 0;
+    font-size: 10px;
+    gap: 6px;
+  }
+
+  .nav-dot {
+    width: 5px;
+    height: 5px;
+  }
+
+  .main-content {
+    margin-left: 0;
+  }
+
+  .topbar {
+    height: 53px;
+    padding: 0 18px;
+  }
+
+  .page-container {
+    padding: 30px 16px 45px;
+  }
+
+  .welcome-row {
+    margin-bottom: 25px;
+  }
+
+  h1 {
+    font-size: 36px;
+  }
+
+  .subtitle {
+    font-size: 12px;
+  }
+
+  .panel {
+    padding: 19px 15px;
+  }
+
+  .panel-heading {
+    align-items: flex-start;
+  }
+
+  .form-footer {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .primary-button {
+    justify-content: center;
+    width: 100%;
+    padding: 14px;
+  }
+
+  .history-item,
+  .repository-card {
+    gap: 9px;
+    padding: 12px 10px;
+  }
+
+  .history-status {
+    font-size: 9px;
+  }
+
+  .history-title strong,
+  .repository-card strong {
+    font-size: 11px;
+  }
+
+  .history-arrow {
+    display: none;
+  }
+}
+
+@media (max-width: 390px) {
+  .brand strong {
+    font-size: 13px;
+  }
+
+  .sidebar {
+    gap: 3px;
+    padding: 10px 8px;
+  }
+
+  .sidebar > .nav-item {
+    padding: 8px 5px;
+    font-size: 9px;
+  }
+
+  .history-status {
+    max-width: 85px;
+    white-space: normal;
+  }
+}
+
+/* Make backend connection errors visible without disrupting the layout. */
+.error-message {
+  color: #ff8585;
+  font-size: 0.875rem;
+  line-height: 1.5;
+  margin: 0.75rem 0;
+}
+
+/* Keep the results panel from growing wider than its parent. */
+.result-panel {
+  min-width: 0;
+  max-width: 100%;
+  margin-top: 1rem;
+  overflow: hidden;
+}
+
+/* Main report and source evidence share predictable text sizing. */
+.investigation-answer {
+  min-width: 0;
+  max-width: 100%;
+  color: inherit;
+  font-size: 0.9rem;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+  word-break: normal;
+}
+
+/* Give report headings consistent spacing. */
+.investigation-answer h1,
+.investigation-answer h2,
+.investigation-answer h3,
+.investigation-answer h4 {
+  line-height: 1.35;
+  letter-spacing: normal;
+  margin: 1.25rem 0 0.65rem;
+}
+
+.investigation-answer h1:first-child,
+.investigation-answer h2:first-child,
+.investigation-answer h3:first-child,
+.investigation-answer h4:first-child {
+  margin-top: 0;
+}
+
+.investigation-answer p,
+.investigation-answer ul,
+.investigation-answer ol,
+.investigation-answer blockquote {
+  margin: 0.75rem 0;
+}
+
+.investigation-answer li {
+  margin: 0.35rem 0;
+}
+
+.investigation-answer blockquote {
+  padding-left: 1rem;
+  border-left: 3px solid var(--border);
+  color: var(--muted);
+}
+
+/* Keep code blocks inside the report panel and scroll long lines horizontally. */
+.investigation-answer pre {
+  display: block;
+  max-width: 100%;
+  margin: 0.85rem 0;
+  padding: 1rem;
+  overflow-x: auto;
+  box-sizing: border-box;
+  border: 1px solid rgba(150, 160, 180, 0.18);
+  border-radius: 8px;
+  background: #10131b;
+  white-space: pre;
+  tab-size: 4;
+}
+
+/* Preserve exact code indentation and prevent long code lines from stretching the page. */
+.investigation-answer pre code {
+  display: block;
+  width: max-content;
+  min-width: 100%;
+  font-family: Consolas, "Courier New", monospace;
+  font-size: 0.875rem;
+  line-height: 1.65;
+  white-space: pre;
+  overflow-wrap: normal;
+  word-break: normal;
+}
+
+/* Style inline code without affecting ordinary paragraphs. */
+.investigation-answer :not(pre) > code {
+  padding: 0.15rem 0.3rem;
+  border-radius: 4px;
+  background: rgba(150, 160, 180, 0.15);
+  font-family: Consolas, "Courier New", monospace;
+  font-size: 0.9em;
+}
+
+/* Tables from GitHub-flavored Markdown can scroll on small screens. */
+.investigation-answer table {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+  border-collapse: collapse;
+}
+
+.investigation-answer th,
+.investigation-answer td {
+  padding: 0.55rem 0.7rem;
+  border: 1px solid var(--border);
+  text-align: left;
+}
+
+/* Make lists and links fit within narrow report panels. */
+.investigation-answer a {
+  color: #b5a9ff;
+  overflow-wrap: anywhere;
+}
+
+.investigation-answer img {
+  max-width: 100%;
+  height: auto;
+}
+
+/* Keep source evidence expandable and preserve its literal line breaks. */
+details.history-item {
+  display: block;
+  min-width: 0;
+  padding: 1rem;
+}
+
+details.history-item summary {
+  cursor: pointer;
+}
+
+details.history-item .investigation-answer {
+  max-height: 420px;
+  overflow: auto;
+  margin-top: 1rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid rgba(150, 160, 180, 0.2);
+}
+
+/* Evidence is plain text, so preserve indentation and allow horizontal scrolling. */
+details.history-item pre.investigation-answer {
+  white-space: pre;
+  overflow-wrap: normal;
+  word-break: normal;
+  font-family: Consolas, "Courier New", monospace;
+  font-size: 0.82rem;
+  line-height: 1.65;
+}
+
+details.history-item .investigation-answer pre {
+  margin: 0;
+}
+
+/* Final investigation-report refinements: readable code and evidence. */
+
+/* Keep the result card inside its parent and avoid accidental page-wide overflow. */
+.result-panel {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+}
+
+.result-panel .investigation-answer,
+details.history-item .investigation-answer {
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  word-break: normal;
+}
+
+/* AI-generated report code: preserve line breaks while wrapping long lines. */
+.result-panel .investigation-answer pre {
+  display: block;
+  max-width: 100%;
+  box-sizing: border-box;
+  margin: 0.85rem 0;
+  padding: 1rem;
+  overflow: visible;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: normal;
+  tab-size: 4;
+  border: 1px solid rgba(150, 160, 180, 0.18);
+  border-radius: 8px;
+  background: #10131b;
+}
+
+.result-panel .investigation-answer pre code {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  font-family: Consolas, "Courier New", monospace;
+  font-size: 0.875rem;
+  line-height: 1.65;
+}
+
+.result-panel .investigation-answer pre {
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
+/* Evidence rows should expand naturally instead of creating nested scroll areas. */
+details.history-item {
+  display: block;
+  min-width: 0;
+  max-width: 100%;
+  padding: 1rem;
+}
+
+details.history-item summary {
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+
+details.history-item .investigation-answer {
+  max-height: none;
+  overflow: visible;
+  margin-top: 1rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid rgba(150, 160, 180, 0.2);
+}
+
+/* Tool output is plain text. Keep its line breaks and indentation, but wrap
+   very long lines so users do not need a horizontal scrollbar. */
+details.history-item pre.investigation-answer {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0.75rem;
+  white-space: pre-wrap;
+  overflow: visible;
+  overflow-wrap: anywhere;
+  word-break: normal;
+  font-family: Consolas, "Courier New", monospace;
+  font-size: 0.82rem;
+  line-height: 1.65;
+  tab-size: 4;
+  background: #0e1118;
+  border: 1px solid rgba(150, 160, 180, 0.16);
+  border-radius: 7px;
+}
+
+/* Allow evidence text and report content to shrink inside flex/grid layouts. */
+.history-list,
+.history-item,
+.history-title,
+.result-panel,
+.investigation-answer {
+  min-width: 0;
+}
+
+/* Keep inline code visually distinct without forcing the whole line wider. */
+.investigation-answer :not(pre) > code {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+/* Tables from Markdown can scroll independently if they are wider than the card. */
+.investigation-answer table {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+  border-collapse: collapse;
+}
+
+/* Subtle dark scrollbars remain available for wide Markdown tables if needed. */
+.investigation-answer table {
+  scrollbar-width: thin;
+  scrollbar-color: #454b5b #151821;
+}
+
+.investigation-answer table::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.investigation-answer table::-webkit-scrollbar-track {
+  background: #151821;
+  border-radius: 8px;
+}
+
+.investigation-answer table::-webkit-scrollbar-thumb {
+  background: #454b5b;
+  border-radius: 8px;
+}
+
+.investigation-answer table::-webkit-scrollbar-thumb:hover {
+  background: #626a7d;
+}

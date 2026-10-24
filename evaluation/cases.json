@@ -1,0 +1,94 @@
+
+[
+  {
+    "case_id": "empty-list-division",
+    "repository_id": "devpilot-known-bug-test",
+    "description": "Empty-list division by zero",
+    "expected_root_cause_terms": [
+      "division by zero",
+      "empty list",
+      "len(numbers)",
+      "zero"
+    ],
+    "expected_evidence": [
+      {
+        "file": "calculator.py",
+        "line": 4
+      },
+      {
+        "file": "main.py",
+        "line": 4
+      }
+    ]
+  },
+  {
+    "case_id": "normalized-username-lookup",
+    "repository_id": "devpilot-data-flow-test",
+    "description": "Normalized username is not used for lookup",
+    "expected_root_cause_terms": [
+      "normalized",
+      "username",
+      "USERS.get",
+      "dictionary"
+    ],
+    "expected_evidence": [
+      {
+        "file": "service.py",
+        "line": 9
+      },
+      {
+        "file": "service.py",
+        "line": 10
+      },
+      {
+        "file": "users.py",
+        "line": 3
+      }
+    ]
+  },
+  {
+    "case_id": "off-by-one-total",
+    "repository_id": "devpilot-boundary-test",
+    "description": "Final list element is skipped",
+    "expected_root_cause_terms": [
+      "off-by-one",
+      "range",
+      "last element",
+      "skips"
+    ],
+    "expected_evidence": [
+      {
+        "file": "calculator.py",
+        "line": 3
+      },
+      {
+        "file": "calculator.py",
+        "line": 4
+      },
+      {
+        "file": "main.py",
+        "line": 3
+      }
+    ],
+    "expected_root_cause": {
+      "faulty_expression": "range(len(numbers) - 1)",
+      "actual_behavior": "The loop excludes the final list element.",
+      "correct_behavior": "The loop should process every list element.",
+      "evidence": [
+        {
+          "file": "calculator.py",
+          "lines": [
+            3,
+            4
+          ]
+        },
+        {
+          "file": "main.py",
+          "lines": [
+            3
+          ]
+        }
+      ]
+    }
+  }
+]
