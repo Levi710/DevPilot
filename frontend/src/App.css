@@ -343,18 +343,48 @@ h2 {
 }
 
 select,
-textarea {
+textarea,
+input[type="text"],
+input[type="url"] {
   width: 100%;
   color: #e8eaf2;
   background: #0d1017;
   border: 1px solid #303546;
   border-radius: 8px;
   padding: 12px 13px;
-  font-size: 12px;
+  font-size: 13px;
 }
 
-select {
-  min-height: 43px;
+.select-container {
+  position: relative;
+  width: 100%;
+}
+
+.select-container::after {
+  content: "▾";
+  position: absolute;
+  right: 14px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: #9299aa;
+  font-size: 16px;
+  pointer-events: none;
+}
+
+select.repo-dropdown {
+  min-height: 44px;
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  padding-right: 38px;
+  cursor: pointer;
+  background-color: #0d1017;
+}
+
+select.repo-dropdown option {
+  background-color: #141722;
+  color: #e8eaf2;
+  padding: 10px;
 }
 
 textarea {
@@ -1635,6 +1665,12 @@ details.history-item pre.investigation-answer {
   .timeline-steps {
     flex-direction: column;
     gap: 12px;
+  }
+
+  select,
+  textarea,
+  input {
+    font-size: 16px !important; /* Prevents iOS Safari from auto-zooming when tapping inputs */
   }
 }
 

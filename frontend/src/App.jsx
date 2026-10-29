@@ -62,69 +62,57 @@ function App() {
   const [investigationResult, setInvestigationResult] = useState(null);
   const [investigationError, setInvestigationError] = useState("");
 
-  // Load the registered repositories when the app opens.
-  useEffect(() => {
-    let cancelled = false;
+  async function loadRepositories() {
+    try {
+      setRepositoriesLoading(true);
+      setRepositoryError("");
 
-    async function loadRepositories() {
-      try {
-        setRepositoriesLoading(true);
-        setRepositoryError("");
+      const response = await fetch(
+        `${API_BASE_URL}/api/repositories`
+      );
 
-        const response = await fetch(
-          `${API_BASE_URL}/api/repositories`
+      if (!response.ok) {
+        throw new Error(`Backend returned HTTP ${response.status}`);
+      }
+
+      const data = await response.json();
+
+      if (!Array.isArray(data.repositories)) {
+        throw new Error("Invalid repository list returned by the API.");
+      }
+
+      setRepositories(data.repositories);
+
+      // Prefer the existing selection if it remains registered and connected.
+      setRepoId((currentId) => {
+        const currentRepo = data.repositories.find(
+          (repo) =>
+            repo.repository_id === currentId &&
+            repo.status === "connected"
         );
 
-        if (!response.ok) {
-          throw new Error(`Backend returned HTTP ${response.status}`);
-        }
+        if (currentRepo) return currentId;
 
-        const data = await response.json();
+        const firstConnected = data.repositories.find(
+          (repo) => repo.status === "connected"
+        );
 
-        if (!Array.isArray(data.repositories)) {
-          throw new Error("Invalid repository list returned by the API.");
-        }
-
-        if (cancelled) return;
-
-        setRepositories(data.repositories);
-
-        // Prefer the existing selection if it remains registered and connected.
-        setRepoId((currentId) => {
-          const currentRepo = data.repositories.find(
-            (repo) =>
-              repo.repository_id === currentId &&
-              repo.status === "connected"
-          );
-
-          if (currentRepo) return currentId;
-
-          const firstConnected = data.repositories.find(
-            (repo) => repo.status === "connected"
-          );
-
-          return firstConnected?.repository_id ?? "";
-        });
-      } catch (error) {
-        if (!cancelled) {
-          setRepositoryError(
-            error instanceof Error
-              ? error.message
-              : "Could not load repositories."
-          );
-        }
-      } finally {
-        if (!cancelled) {
-          setRepositoriesLoading(false);
-        }
-      }
+        return firstConnected?.repository_id ?? "";
+      });
+    } catch (error) {
+      setRepositoryError(
+        error instanceof Error
+          ? error.message
+          : "Could not load repositories."
+      );
+    } finally {
+      setRepositoriesLoading(false);
     }
+  }
 
+  // Load the registered repositories when the app opens.
+  useEffect(() => {
     loadRepositories();
-
-    return () => {
-      cancelled = true;
-    };
   }, []);
 
   // Load real saved investigations from the backend.
@@ -637,38 +625,56 @@ function App() {
                 </div>
 
                 <form onSubmit={handleSubmit}>
-                  <label className="field-label" htmlFor="repository">
-                    Repository
-                  </label>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <label className="field-label" htmlFor="repository" style={{ margin: "16px 0 8px" }}>
+                      Target Repository
+                    </label>
+                    <button
+                      type="button"
+                      className="text-button"
+                      style={{ fontSize: "11px", margin: "16px 0 8px" }}
+                      onClick={() => loadRepositories()}
+                      disabled={repositoriesLoading}
+                    >
+                      {repositoriesLoading ? "Refreshing..." : "↻ Refresh repos"}
+                    </button>
+                  </div>
 
-                  <select
-                    id="repository"
-                    value={repoId}
-                    onChange={(event) => {
-                      setRepoId(event.target.value);
-                      clearResult();
-                    }}
-                    disabled={repositoriesLoading || repositories.length === 0}
-                  >
-                    {repositoriesLoading && (
-                      <option value="">Loading repositories...</option>
-                    )}
+                  <div className="select-container">
+                    <select
+                      id="repository"
+                      className="repo-dropdown"
+                      value={repoId}
+                      onChange={(event) => {
+                        setRepoId(event.target.value);
+                        clearResult();
+                      }}
+                      disabled={repositoriesLoading || repositories.length === 0}
+                    >
+                      {repositoriesLoading && (
+                        <option value="">Loading registered repositories...</option>
+                      )}
 
-                    {!repositoriesLoading && repositories.length === 0 && (
-                      <option value="">No repositories available</option>
-                    )}
+                      {!repositoriesLoading && repositories.length === 0 && (
+                        <option value="">No repositories registered yet</option>
+                      )}
 
-                    {repositories.map((repo) => (
-                      <option
-                        key={repo.repository_id}
-                        value={repo.repository_id}
-                        disabled={repo.status !== "connected"}
-                      >
-                        {repo.name} · {repo.source_type}
-                        {repo.status !== "connected" ? " (Unavailable)" : ""}
-                      </option>
-                    ))}
-                  </select>
+                      {!repositoriesLoading && repositories.length > 0 && !repoId && (
+                        <option value="" disabled>Select a connected repository...</option>
+                      )}
+
+                      {repositories.map((repo) => (
+                        <option
+                          key={repo.repository_id}
+                          value={repo.repository_id}
+                          disabled={repo.status !== "connected"}
+                        >
+                          {repo.name} ({repo.source_type})
+                          {repo.status !== "connected" ? " · Unavailable" : " · Connected"}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
 
                   <div className="repo-note">
                     <span className="status-dot" />
