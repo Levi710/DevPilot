@@ -1,9 +1,8 @@
-"""DevPilot Sandbox Execution Harness.
+"""DevPilot sandbox execution harness.
 
-Enforces OS-level and runtime security boundaries:
-1. Network isolation: intercepts and blocks direct socket.connect, socket.bind, and urllib calls.
-2. Filesystem isolation: intercepts and blocks write/delete operations outside the shadow workspace.
-3. Process isolation: intercepts and blocks subprocess spawning and ctypes loading.
+The parent process applies Windows Job Object resource limits.  This harness
+installs Python audit hooks before untrusted code runs; those hooks are a
+runtime guard, not a claim of OS filesystem virtualisation.
 """
 
 import os
@@ -11,12 +10,43 @@ import pathlib
 import sys
 
 
+def _is_within(path: pathlib.Path, root: pathlib.Path) -> bool:
+    """Return whether *path* stays within *root*, including after link resolution."""
+    try:
+        path.resolve().relative_to(root)
+        return True
+    except ValueError:
+        return False
+
+
 def install_security_boundary(shadow_dir_str: str) -> None:
-    """Register Python runtime audit hooks for strict sandbox enforcement."""
+    """Register audit hooks that permit only shadow and Python-runtime reads."""
     shadow_root = pathlib.Path(shadow_dir_str).resolve()
+    runtime_roots = {
+        pathlib.Path(sys.base_prefix).resolve(),
+        pathlib.Path(sys.prefix).resolve(),
+    }
+
+    def _violation(message: str) -> PermissionError:
+        return PermissionError(f"Sandbox violation: {message}")
+
+    def _allows_read(target_path: pathlib.Path) -> bool:
+        return _is_within(target_path, shadow_root) or any(
+            _is_within(target_path, root) for root in runtime_roots
+        )
+
+    def _is_null_device(file_arg: object) -> bool:
+        """The Windows null device is safe and used by Python/pytest internals."""
+        if not isinstance(file_arg, (str, bytes, os.PathLike)):
+            return False
+        return os.fsdecode(file_arg).replace("/", "\\").casefold() in {
+            "nul",
+            r"\\.\nul",
+            r"\\?\nul",
+        }
 
     def _security_audit_hook(event: str, args: tuple) -> None:
-        # Enforce OS-level network boundary: block all raw socket operations
+        # Block raw network operations even when a script bypasses proxy variables.
         if event in (
             "socket.connect",
             "socket.bind",
@@ -24,21 +54,28 @@ def install_security_boundary(shadow_dir_str: str) -> None:
             "socket.sendmsg",
             "socket.getaddrinfo",
         ) or event.startswith("http.client.") or event == "urllib.request":
-            raise PermissionError(
-                f"OS-Enforced Sandbox Violation: Direct network access is forbidden ({event})."
-            )
+            raise _violation(f"direct network access is forbidden ({event}).")
 
-        # Enforce OS-level filesystem boundary: block write access outside shadow workspace
+        # Only shadow files and the selected Python runtime may be read.  Writes
+        # and filesystem changes are restricted to the shadow workspace.
         if event in ("open", "io.open"):
             file_arg = args[0] if args else None
             mode_arg = args[1] if len(args) > 1 else "r"
-            if isinstance(mode_arg, str) and any(m in mode_arg for m in ("w", "a", "+", "x")):
-                if isinstance(file_arg, (str, bytes, os.PathLike)):
-                    target_path = pathlib.Path(os.fsdecode(file_arg)).resolve()
-                    if not target_path.is_relative_to(shadow_root):
-                        raise PermissionError(
-                            f"OS-Enforced Sandbox Violation: Write access outside shadow workspace forbidden ({target_path})."
-                        )
+            if isinstance(file_arg, (str, bytes, os.PathLike)):
+                target_path = pathlib.Path(os.fsdecode(file_arg)).resolve()
+                if _is_null_device(file_arg):
+                    return
+                is_write = isinstance(mode_arg, str) and any(
+                    flag in mode_arg for flag in ("w", "a", "+", "x")
+                )
+                if is_write and not _is_within(target_path, shadow_root):
+                    raise _violation(
+                        f"write access outside shadow workspace is forbidden ({target_path})."
+                    )
+                if not is_write and not _allows_read(target_path):
+                    raise _violation(
+                        f"read access outside allowed runtime roots is forbidden ({target_path})."
+                    )
         elif event in (
             "os.remove",
             "os.unlink",
@@ -51,24 +88,18 @@ def install_security_boundary(shadow_dir_str: str) -> None:
             for path_arg in args:
                 if isinstance(path_arg, (str, bytes, os.PathLike)):
                     target_path = pathlib.Path(os.fsdecode(path_arg)).resolve()
-                    if not target_path.is_relative_to(shadow_root):
-                        raise PermissionError(
-                            f"OS-Enforced Sandbox Violation: Filesystem modification outside shadow workspace forbidden ({target_path})."
+                    if not _is_within(target_path, shadow_root):
+                        raise _violation(
+                            f"filesystem modification outside shadow workspace is forbidden ({target_path})."
                         )
 
-        # Enforce process boundary
-        elif event in ("os.system", "subprocess.Popen", "os.spawn", "os.posix_spawn"):
-            raise PermissionError(
-                f"OS-Enforced Sandbox Violation: Child process execution forbidden ({event})."
-            )
+        if event in ("os.system", "subprocess.Popen", "os.spawn", "os.posix_spawn"):
+            raise _violation(f"child process execution is forbidden ({event}).")
 
-        # Enforce native library boundary
-        elif event.startswith("ctypes.") or event in ("_ctypes.dlopen", "_ctypes.LoadLibrary"):
-            raise PermissionError(
-                f"OS-Enforced Sandbox Violation: Native binary execution forbidden ({event})."
-            )
+        if event.startswith("ctypes.") or event in ("_ctypes.dlopen", "_ctypes.LoadLibrary"):
+            raise _violation(f"native binary execution is forbidden ({event}).")
 
-    # sys.addaudithook cannot be removed or monkey-patched once installed
+    # Audit hooks are append-only for the life of this Python process.
     sys.addaudithook(_security_audit_hook)
 
 
@@ -81,18 +112,26 @@ if __name__ == "__main__":
     target_script = sys.argv[2]
     shadow_root = pathlib.Path(shadow_dir).resolve()
 
-    # Ensure shadow workspace is the root for module imports
+    target_path = pathlib.Path(target_script).resolve()
+    if not _is_within(target_path, shadow_root) or not target_path.is_file():
+        sys.stderr.write("Target script must be a file inside the shadow workspace.\n")
+        sys.exit(1)
+
+    # Ensure both common Python source layouts resolve to the shadow copy, not
+    # an installed package from the selected runtime.
     if str(shadow_root) not in sys.path:
         sys.path.insert(0, str(shadow_root))
+    source_root = shadow_root / "src"
+    if source_root.is_dir() and str(source_root) not in sys.path:
+        sys.path.insert(0, str(source_root))
 
-    # Install unremovable C-level audit hook boundary
+    # Install the audit hook before the target source is opened.
     install_security_boundary(shadow_dir)
 
     # Adjust sys.argv so the target script sees standard arguments
     sys.argv = [target_script] + sys.argv[3:]
 
     # Execute target script in isolated __main__ namespace
-    target_path = pathlib.Path(target_script).resolve()
     with open(target_path, "rb") as f:
         code = compile(f.read(), str(target_path), "exec")
         exec(code, {"__name__": "__main__", "__file__": str(target_path)})

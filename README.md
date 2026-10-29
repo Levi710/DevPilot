@@ -187,6 +187,42 @@ Open the local URL printed by Vite, normally:
 
 `http://localhost:5173`
 
+### Optional: use DevPilot from a phone on a trusted local network
+
+DevPilot is loopback-only by default. To use the frontend from a phone on the
+same private Wi-Fi network, keep the backend bound to `127.0.0.1` and add these
+values to the project-root `.env` file:
+
+```dotenv
+DEVPILOT_LAN_ENABLED=true
+DEVPILOT_API_TOKEN=replace-with-a-long-random-secret
+```
+
+Restart both servers, then open the Network URL printed by Vite on the phone.
+The Vite development server proxies `/api` calls to the loopback backend and
+adds the token server-side; the token is not included in browser JavaScript.
+
+This is for a **trusted private network only**. The Vite development server has
+no per-user login, so any device that can reach its Network URL can operate the
+DevPilot interface. Do not expose it to the public internet, port-forward it,
+or use it on untrusted Wi-Fi. Windows may ask to allow Vite through the Private
+network firewall profile; do not enable Public-network access.
+
+### Importing public GitHub repositories
+
+The **Repositories** page can import a public `https://github.com/owner/repository`
+URL. DevPilot clones it into `src/devpilot/data/repositories/` and investigates
+that local checkout. It rejects URLs containing credentials and does not store a
+GitHub token, push changes, create branches, or open pull requests.
+
+For empirical Python validation, create a project-local `.venv` and install the
+repository's documented test dependencies yourself, then refresh DevPilot. It
+automatically uses `.venv\Scripts\python.exe` (or `.venv/bin/python`) when
+present. DevPilot deliberately does not run arbitrary setup scripts or install
+unreviewed dependencies automatically. Source inspection supports several
+common code formats, but sandboxed execution and patch verification currently
+support Python only.
+
 ## Using DevPilot
 
 1. Start the backend and frontend.
@@ -223,6 +259,7 @@ DevPilot should identify the off-by-one error, explain the skipped element, and 
 |---|---|---|
 | GET | `/api/health` | Check backend health |
 | GET | `/api/repositories` | List registered repositories |
+| POST | `/api/repositories/github-public` | Clone and register a public GitHub repository |
 | POST | `/api/investigations` | Start a new investigation |
 | GET | `/api/investigations` | Retrieve investigation history |
 | GET | `/api/investigations/{id}` | Retrieve a specific investigation |
@@ -321,33 +358,45 @@ Live evaluation calls the configured model API and measures each verification me
 
 ## Security and sandbox boundaries
 
-Execution is shielded via a defense-in-depth architecture combining OS-enforced boundaries and runtime audit hooks:
+Execution uses a defense-in-depth runtime policy with Windows resource limits:
 
-1. **OS-Enforced Isolation (Windows Job Objects & Low-Integrity Tokens):**
+1. **Windows Job Object Resource Limits:**
    - Subprocesses are assigned to Windows Job Objects (`JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x2000`) guaranteeing process tree termination on exit.
    - Enforced 256MB memory caps and max 5 active processes to prevent fork-bombs and memory exhaustion.
-   - Child processes run with Low Integrity SID (`S-1-16-4096`) and `DISABLE_MAX_PRIVILEGE` tokens, preventing unauthorized system changes.
+   - Validation fails closed when the Job Object cannot be configured or assigned. This project does **not** currently create Low Integrity or restricted Windows tokens.
 
 2. **Python Runtime Audit Hooks (PEP 578 via `sandbox_runner.py`):**
    - Enforces socket network denial (`socket.connect`, `socket.bind`, `socket.sendto`, `socket.getaddrinfo`).
-   - Filesystem confinement prevents writing outside the ephemeral `shadow_root`.
+   - Filesystem confinement allows reads only from the ephemeral `shadow_root` and selected Python runtime roots; it prevents writes outside the shadow workspace.
    - Intercepts subprocess spawning and dynamic C library (`ctypes`) loading.
 
 3. **Strict Verification Semantics:**
    - `reproduction_resolved`: Minimal reproduction test passes against the shadow patch.
    - `regression_suite_passed`: Preexisting regression tests pass without error.
-   - `fix_verified`: Strictly requires `reproduction_confirmed AND reproduction_resolved AND (regression_suite_passed is not False)`.
-   - If a patch fixes the reproduction but breaks the regression suite (as in `flawed-patch-regression`), `reproduction_resolved = True` while `fix_verified = False` and status is `regression_failed`. The UI and API never interpret reproduction resolution alone as an overall verified fix.
+   - `fix_verified`: Strictly requires `reproduction_confirmed AND reproduction_resolved AND regression_suite_passed is True`.
+   - If no regression suite is available, a resolved reproduction is reported as `regression_suite_missing`, never as a verified fix. If a patch breaks the suite, the status is `regression_failed`.
 
 These controls provide defense-in-depth during local development, but userland audit hooks and Job Objects do not replace a full VM/hypervisor or container boundary against adversarial native code exploits. A dedicated external security review of token lifecycle, ACLs, and process isolation is required before accepting untrusted repositories.
 
 ## Current limitations
 
-- **Local repositories:** The current investigation agent supports registered local repositories; GitHub repositories require a separate integration.
+- **GitHub scope:** Public HTTPS repositories can be cloned locally. Private repositories, GitHub OAuth, credential storage, pushes, branches, and pull requests are not implemented.
+- **Execution languages:** Source inspection handles common code formats, while empirical reproduction, regression testing, and patch verification currently support Python projects only.
+- **Dependencies:** DevPilot never executes project setup/install scripts automatically. A project must provide a user-created compatible virtual environment for dependency-aware validation.
 - **Host repository immutability:** The agent validates patches in shadow workspaces and displays unified diffs with test verification, but does not mutate the developer's original files.
 - **Model dependency:** Investigations depend on the configured NVIDIA model API and network availability.
 - **Bounded investigations:** An investigation may be marked incomplete if the model does not produce a conclusion within the iteration limit.
 - **Contract ambiguity:** For edge cases like empty inputs, multiple valid API behaviors exist (e.g. returning 0 vs raising ValueError vs returning None); the engine identifies and highlights these contract trade-offs.
+
+## Self-hosted production roadmap
+
+DevPilot is currently a local investigation application, not an Internet-facing
+production automation service. The production foundation and its locked safety
+boundaries are documented in [SELF_HOSTED_PRODUCTION_FOUNDATION.md](docs/SELF_HOSTED_PRODUCTION_FOUNDATION.md).
+The first GitHub App milestone is read-only and requires explicit installation
+on a selected repository; it cannot create branches, PRs, merges, or deployments.
+For the local Docker Desktop PostgreSQL prerequisite, use
+[DOCKER_SELF_HOSTED_SETUP.md](docs/DOCKER_SELF_HOSTED_SETUP.md).
 
 ## Future improvements
 

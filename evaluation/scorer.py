@@ -329,14 +329,14 @@ def score_report(case, report):
             verification.get("reproduction_resolved", verification.get("valid"))
         )
         regression_suite_passed = verification.get("regression_suite_passed")
-        # fix_verified strictly requires reproduction resolved AND no regression failures
+        # Never trust a legacy boolean alone: full verification requires an
+        # explicit successful regression suite as well as reproduction evidence.
         fix_verified = bool(
             verification.get("fix_verified")
-            if "fix_verified" in verification
-            else (reproduction_confirmed and reproduction_resolved and (regression_suite_passed is not False))
+            and reproduction_confirmed
+            and reproduction_resolved
+            and regression_suite_passed is True
         )
-        if regression_suite_passed is False:
-            fix_verified = False
 
         verification_status = verification.get("verification_status", "unverified")
         timeout_enforced = bool(verification.get("timeout_enforced", verification.get("timed_out")))
@@ -367,11 +367,10 @@ def score_report(case, report):
                             verification_status = res_obj["verification_status"]
                         fix_verified = bool(
                             res_obj.get("fix_verified")
-                            if "fix_verified" in res_obj
-                            else (reproduction_confirmed and reproduction_resolved and (regression_suite_passed is not False))
+                            and reproduction_confirmed
+                            and reproduction_resolved
+                            and regression_suite_passed is True
                         )
-                        if regression_suite_passed is False:
-                            fix_verified = False
                     except Exception:
                         pass
 

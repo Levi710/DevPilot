@@ -1,12 +1,14 @@
 
 import tempfile
 import unittest
+from subprocess import CompletedProcess
 from pathlib import Path
 from unittest.mock import patch
 
 from repository_registry import (
     get_repository,
     load_repositories,
+    clone_public_github_repository,
     register_local_repository,
     save_repositories,
 )
@@ -30,6 +32,14 @@ class TestRepositoryRegistry(unittest.TestCase):
         )
         self.registry_patch.start()
         self.addCleanup(self.registry_patch.stop)
+
+        self.managed_root = Path(self.temp_dir.name) / "managed"
+        self.managed_root_patch = patch(
+            "repository_registry.MANAGED_REPOSITORY_ROOT",
+            self.managed_root,
+        )
+        self.managed_root_patch.start()
+        self.addCleanup(self.managed_root_patch.stop)
 
         # Create a fake project directory for local-repository tests.
         self.project_dir = Path(self.temp_dir.name) / "demo_project"
@@ -91,6 +101,52 @@ class TestRepositoryRegistry(unittest.TestCase):
             load_repositories()["demo"]["name"],
             "Demo Project",
         )
+
+    def test_rejects_github_url_with_credentials(self):
+        with self.assertRaises(ValueError):
+            clone_public_github_repository(
+                "demo",
+                "Demo Project",
+                "https://token@github.com/example/demo",
+            )
+
+    def test_register_discovers_project_virtualenv(self):
+        runtime = self.project_dir / ".venv" / "Scripts" / "python.exe"
+        runtime.parent.mkdir(parents=True)
+        runtime.write_text("placeholder", encoding="utf-8")
+
+        repository = register_local_repository(
+            "demo",
+            "Demo Project",
+            str(self.project_dir),
+        )
+
+        self.assertEqual(repository["python_executable"], str(runtime.resolve()))
+
+    def test_public_github_clone_registers_managed_local_checkout(self):
+        def fake_clone(command, **_kwargs):
+            checkout = Path(command[-1])
+            checkout.mkdir(parents=True)
+            (checkout / "README.md").write_text("demo", encoding="utf-8")
+            return CompletedProcess(command, 0, stdout="cloned", stderr="")
+
+        with patch("repository_registry.shutil.which", return_value="C:/Git/bin/git.exe"), patch(
+            "repository_registry.subprocess.run",
+            side_effect=fake_clone,
+        ) as mocked_run:
+            repository = clone_public_github_repository(
+                "demo",
+                "Demo Project",
+                "https://github.com/example/demo",
+            )
+
+        self.assertEqual(repository["source_type"], "github_public_clone")
+        self.assertEqual(repository["source_url"], "https://github.com/example/demo")
+        self.assertTrue(Path(repository["location"]).is_dir())
+        self.assertEqual(get_repository("demo")["status"], "connected")
+        command = mocked_run.call_args.args[0]
+        self.assertIn("credential.helper=", command)
+        self.assertIn("https://github.com/example/demo.git", command)
 
     
     def test_list_repositories(self):

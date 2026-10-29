@@ -129,6 +129,19 @@ def test_execute_script_clean_pass(sample_repo: Path):
         assert res.exception_type is None
 
 
+def test_execute_script_supports_src_layout_imports(sample_repo: Path):
+    """Projects using src/package layout must import the shadow source tree."""
+    with ShadowWorkspace(str(sample_repo)) as shadow:
+        shadow.write_test_file(
+            "src_layout_import.py",
+            "from calculator import calculate_average\n"
+            "assert calculate_average([10, 20]) == 15\n",
+        )
+        res = shadow.execute_script("src_layout_import.py")
+        assert res.exit_code == 0
+        assert res.failure_classification == "clean_pass"
+
+
 def test_execute_script_target_exception(sample_repo: Path):
     """Test running a reproduction test that triggers a ZeroDivisionError."""
     with ShadowWorkspace(str(sample_repo)) as shadow:
@@ -183,6 +196,51 @@ def test_execute_script_environment_sanitization(sample_repo: Path, monkeypatch)
         res = shadow.execute_script("check_env.py")
         assert res.exit_code == 0
         assert "KEY:None" in res.stdout
+
+
+def test_execute_script_does_not_inherit_unrelated_environment(sample_repo: Path, monkeypatch):
+    """A clean sandbox environment must not leak arbitrary parent variables."""
+    monkeypatch.setenv("DEVPILOT_UNRELATED_SECRET", "do-not-leak")
+    with ShadowWorkspace(str(sample_repo)) as shadow:
+        shadow.write_test_file(
+            "check_unrelated_env.py",
+            "import os\n"
+            "print(os.environ.get('DEVPILOT_UNRELATED_SECRET'))\n",
+        )
+        res = shadow.execute_script("check_unrelated_env.py")
+        assert res.exit_code == 0
+        assert res.stdout.strip() == "None"
+
+
+def test_execute_script_blocks_host_file_read(sample_repo: Path):
+    """Executed code must not be able to read the original repository."""
+    host_target = sample_repo / "host_secret.txt"
+    host_target.write_text("host-only-value", encoding="utf-8")
+    with ShadowWorkspace(str(sample_repo)) as shadow:
+        escaped_path = str(host_target).replace("\\", "\\\\")
+        shadow.write_test_file(
+            "attack_read.py",
+            f"print(open(r'{escaped_path}', encoding='utf-8').read())\n",
+        )
+        res = shadow.execute_script("attack_read.py", bypass_ast_screen=True)
+        assert res.exit_code != 0
+        assert res.failure_classification == "security_violation"
+        assert "read access outside allowed runtime roots is forbidden" in res.stderr
+        assert "host-only-value" not in res.stdout
+
+
+def test_shadow_workspace_skips_symlink_escaping_repository(sample_repo: Path, tmp_path: Path):
+    """Mirroring must not follow a link out of the registered repository."""
+    outside = tmp_path / "outside.txt"
+    outside.write_text("not part of repository", encoding="utf-8")
+    link = sample_repo / "escaped-link.txt"
+    try:
+        link.symlink_to(outside)
+    except OSError:
+        pytest.skip("Symbolic links are not available for this test user.")
+
+    with ShadowWorkspace(str(sample_repo)) as shadow:
+        assert not (shadow.shadow_root / "escaped-link.txt").exists()
 
 
 def test_run_reproduction_test_matches_expected_exception(sample_repo: Path):
@@ -253,12 +311,12 @@ def test_validate_patch_successful_end_to_end(sample_repo: Path):
         expected_exception="ZeroDivisionError",
     )
 
-    assert result["valid"] is True
+    assert result["valid"] is False
     assert result["analysis_passed"] is True
     assert result["reproduction_confirmed"] is True
-    assert result["fix_verified"] is True
+    assert result["fix_verified"] is False
     assert result["reproduction_resolved"] is True
-    assert result["verification_status"] == "fix_verified_no_regression_suite"
+    assert result["verification_status"] == "regression_suite_missing"
     assert result["pre_fix"]["reproduced"] is True
     assert result["pre_fix"]["exception_type"] == "ZeroDivisionError"
     assert result["post_fix"]["exit_code"] == 0
@@ -310,6 +368,77 @@ def test_validate_patch_rejects_flawed_fix_breaking_regression(sample_repo: Path
     assert "FAILED tests" in result["regression_output"]
 
 
+def test_regression_suite_blocks_host_writes(sample_repo: Path):
+    """A suite that escapes the shadow cannot produce a verified patch."""
+    host_target = sample_repo / "regression_host_breach.txt"
+    tests_dir = sample_repo / "tests"
+    tests_dir.mkdir()
+    escaped_path = str(host_target).replace("\\", "\\\\")
+    (tests_dir / "test_host_escape.py").write_text(
+        "from pathlib import Path\n\n"
+        "def test_cannot_write_host_file():\n"
+        f"    Path(r'{escaped_path}').write_text('breach', encoding='utf-8')\n",
+        encoding="utf-8",
+    )
+
+    result = validate_patch(
+        repo_root=str(sample_repo),
+        patch_file="src/calculator.py",
+        patched_content=(
+            "def calculate_average(items):\n"
+            "    if not items:\n"
+            "        return 0\n"
+            "    return sum(items) / len(items)\n"
+        ),
+        test_code=(
+            "from src.calculator import calculate_average\n"
+            "assert calculate_average([]) == 0\n"
+        ),
+        expected_exception="ZeroDivisionError",
+    )
+
+    assert result["reproduction_resolved"] is True
+    assert result["regression_suite_passed"] is False
+    assert result["fix_verified"] is False
+    assert not host_target.exists()
+    assert "Sandbox violation: write access outside shadow workspace" in result["regression_output"]
+
+
+def test_regression_suite_runs_every_discovered_test(sample_repo: Path):
+    """A failure after the historical 20-file cap must invalidate verification."""
+    tests_dir = sample_repo / "tests"
+    tests_dir.mkdir()
+    for number in range(20):
+        (tests_dir / f"test_{number:02d}_pass.py").write_text(
+            f"def test_{number:02d}_pass():\n    assert True\n",
+            encoding="utf-8",
+        )
+    (tests_dir / "test_99_late_failure.py").write_text(
+        "def test_late_failure():\n    assert False, 'late regression failure'\n",
+        encoding="utf-8",
+    )
+
+    result = validate_patch(
+        repo_root=str(sample_repo),
+        patch_file="src/calculator.py",
+        patched_content=(
+            "def calculate_average(items):\n"
+            "    if not items:\n"
+            "        return 0\n"
+            "    return sum(items) / len(items)\n"
+        ),
+        test_code=(
+            "from src.calculator import calculate_average\n"
+            "assert calculate_average([]) == 0\n"
+        ),
+        expected_exception="ZeroDivisionError",
+    )
+
+    assert result["regression_suite_passed"] is False
+    assert result["fix_verified"] is False
+    assert "late regression failure" in result["regression_output"]
+
+
 def test_validate_patch_rejects_unreproduced_baseline(sample_repo: Path):
     """Requirement 1: A patch must be rejected if the baseline test does not reproduce the bug."""
     test_code = (
@@ -346,7 +475,7 @@ def test_adversarial_network_access_blocked_by_os_boundary(sample_repo: Path):
         res = shadow.execute_script("attack_network.py", bypass_ast_screen=True)
         assert res.exit_code != 0
         assert res.failure_classification == "security_violation"
-        assert "OS-Enforced Sandbox Violation: Direct network access is forbidden" in res.stderr
+        assert "Sandbox violation: direct network access is forbidden" in res.stderr
 
 
 def test_adversarial_filesystem_write_outside_shadow_blocked(sample_repo: Path):
@@ -363,7 +492,7 @@ def test_adversarial_filesystem_write_outside_shadow_blocked(sample_repo: Path):
         res = shadow.execute_script("attack_fs.py", bypass_ast_screen=True)
         assert res.exit_code != 0
         assert res.failure_classification == "security_violation"
-        assert "OS-Enforced Sandbox Violation: Write access outside shadow workspace forbidden" in res.stderr
+        assert "Sandbox violation: write access outside shadow workspace is forbidden" in res.stderr
         # Verify host file was NEVER created
         assert not host_target.exists()
 
@@ -379,4 +508,4 @@ def test_adversarial_process_spawn_blocked(sample_repo: Path):
         res = shadow.execute_script("attack_proc.py", bypass_ast_screen=True)
         assert res.exit_code != 0
         assert res.failure_classification == "security_violation"
-        assert "OS-Enforced Sandbox Violation: Child process execution forbidden" in res.stderr
+        assert "Sandbox violation: child process execution is forbidden" in res.stderr

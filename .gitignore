@@ -37,6 +37,8 @@ frontend/.vite/
 *.sqlite3
 *.db
 src/devpilot/repositories.json
+src/devpilot/data/repositories/
+src/devpilot/data/worker-staging/
 
 # Generated evaluation output
 evaluation/live_results.json

@@ -1,18 +1,45 @@
 
 """FastAPI endpoints for DevPilot."""
 
-from fastapi import FastAPI, HTTPException, Query
+import hmac
+import os
+
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
+from dotenv import load_dotenv
+
+load_dotenv()
+
+try:
+    from production_config import validate_runtime_configuration
+except ImportError:
+    from devpilot.production_config import validate_runtime_configuration
+
+# Production mode is intentionally fail-closed. Development remains the
+# default because the current desktop application has not yet migrated its
+# database or worker execution to production services.
+RUNTIME_CONFIGURATION = validate_runtime_configuration()
 
 from agent import run_investigation
-from repository_registry import get_repository, list_repositories
+from repository_registry import (
+    clone_public_github_repository,
+    get_repository,
+    list_repositories,
+)
 from investigation_store import (
     get_investigation,
     initialize_store,
     list_investigations,
     save_investigation,
 )
+
+try:
+    from task_store import PostgresTaskStore, TaskStoreError
+    from webhook_service import MAX_WEBHOOK_BODY_BYTES, WebhookIngressError, accept_pull_request_webhook, read_bounded_body
+except ImportError:
+    from devpilot.task_store import PostgresTaskStore, TaskStoreError
+    from devpilot.webhook_service import MAX_WEBHOOK_BODY_BYTES, WebhookIngressError, accept_pull_request_webhook, read_bounded_body
 
 
 # --------------------------------------------------
@@ -24,17 +51,41 @@ app = FastAPI(
     version="0.2.0",
 )
 
-# Allow requests from the local Vite development server.
+_API_TOKEN = os.getenv("DEVPILOT_API_TOKEN", "")
+_GITHUB_WEBHOOK_SECRET = os.getenv("DEVPILOT_GITHUB_WEBHOOK_SECRET", "")
+_TASK_DATABASE_URL = os.getenv("DEVPILOT_DATABASE_URL", "")
+_LAN_ENABLED = os.getenv("DEVPILOT_LAN_ENABLED", "").strip().lower() == "true"
+if _LAN_ENABLED and len(_API_TOKEN) < 32:
+    raise RuntimeError(
+        "DEVPILOT_LAN_ENABLED requires a DEVPILOT_API_TOKEN of at least 32 characters."
+    )
+_LOCAL_ORIGINS = [
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+]
+_configured_origins = [
+    origin.strip()
+    for origin in os.getenv("DEVPILOT_ALLOWED_ORIGINS", "").split(",")
+    if origin.strip()
+]
+
+# By default only the local Vite development server is allowed.  Additional
+# origins require an explicit environment configuration.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-    ],
+    allow_origins=[*_LOCAL_ORIGINS, *_configured_origins],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+def require_api_token(
+    x_devpilot_token: str | None = Header(default=None),
+) -> None:
+    """Require the opt-in token for API actions when one is configured."""
+    if _API_TOKEN and not hmac.compare_digest(x_devpilot_token or "", _API_TOKEN):
+        raise HTTPException(status_code=401, detail="A valid DevPilot API token is required.")
 
 
 # --------------------------------------------------
@@ -53,6 +104,20 @@ class InvestigationRequest(BaseModel):
         min_length=1,
         max_length=10000,
     )
+
+    max_iterations: int = Field(
+        default=5,
+        ge=1,
+        le=10,
+    )
+
+
+class PublicGitHubImportRequest(BaseModel):
+    """Request body for cloning a public GitHub repository locally."""
+
+    repository_id: str = Field(min_length=1, max_length=100)
+    name: str = Field(min_length=1, max_length=200)
+    github_url: str = Field(min_length=1, max_length=500)
 
 
 # --------------------------------------------------
@@ -80,11 +145,90 @@ def health():
     }
 
 
+@app.post("/api/github/webhooks")
+async def github_webhook(
+    request: Request,
+    x_hub_signature_256: str | None = Header(default=None),
+    x_github_delivery: str | None = Header(default=None),
+    x_github_event: str | None = Header(default=None),
+):
+    """Accept a bounded, signed, pull-request webhook into the durable queue.
+
+    This endpoint does not call GitHub or execute a task. It is disabled unless
+    explicit local configuration provides both a webhook secret and PostgreSQL.
+    """
+
+    content_length = request.headers.get("content-length")
+    if content_length:
+        try:
+            if int(content_length) > MAX_WEBHOOK_BODY_BYTES:
+                raise HTTPException(status_code=413, detail="GitHub webhook body exceeds the 1 MB limit.")
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="Invalid Content-Length header.") from exc
+    try:
+        body = await read_bounded_body(request.stream())
+        result = accept_pull_request_webhook(
+            body=body,
+            signature_header=x_hub_signature_256,
+            delivery_id=x_github_delivery,
+            event_name=x_github_event,
+            webhook_secret=_GITHUB_WEBHOOK_SECRET,
+            store=PostgresTaskStore(_TASK_DATABASE_URL),
+        )
+    except WebhookIngressError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+    except Exception:
+        # Never return database URLs, token fragments, payloads, or tracebacks.
+        raise HTTPException(status_code=503, detail="GitHub webhook ingress is unavailable.")
+    return {
+        "status": result.status,
+        "delivery_was_new": result.delivery_was_new,
+        "task_id": result.task_id,
+    }
+
+
+@app.get("/api/tasks/{task_id}", dependencies=[Depends(require_api_token)])
+def get_durable_task(task_id: str):
+    """Read a bounded, non-secret task summary and its audit events."""
+    if not _TASK_DATABASE_URL:
+        raise HTTPException(status_code=503, detail="Durable task storage is not configured.")
+    try:
+        store = PostgresTaskStore(_TASK_DATABASE_URL)
+        task = store.get_task(task_id)
+        if task is None:
+            raise HTTPException(status_code=404, detail="Durable task was not found.")
+        events = store.list_task_audit_events(task_id)
+    except HTTPException:
+        raise
+    # api.py supports both top-level ``--app-dir`` and package imports. Catch
+    # the stable RuntimeError base so either import identity of TaskStoreError
+    # receives the same safe, non-diagnostic response.
+    except RuntimeError:
+        raise HTTPException(status_code=503, detail="Durable task storage is unavailable.")
+    return {
+        "task": {
+            "task_id": task.task_id,
+            "source": task.source,
+            "repository_node_id": task.repository_node_id,
+            "base_sha": task.base_sha,
+            "state": task.state,
+            "created_at": task.created_at.isoformat(),
+        },
+        "audit_events": [
+            # Metadata may contain delivery correlation data. It remains in the
+            # database audit trail but is intentionally not an API response.
+            {"event_id": event.event_id, "event_type": event.event_type,
+             "created_at": event.created_at.isoformat()}
+            for event in events
+        ],
+    }
+
+
 # --------------------------------------------------
 # Repository endpoints
 # --------------------------------------------------
 
-@app.get("/api/repositories")
+@app.get("/api/repositories", dependencies=[Depends(require_api_token)])
 def repositories():
     """Return registered repositories and their availability."""
 
@@ -99,11 +243,31 @@ def repositories():
         ) from exc
 
 
+@app.post(
+    "/api/repositories/github-public",
+    status_code=201,
+    dependencies=[Depends(require_api_token)],
+)
+def import_public_github_repository(request: PublicGitHubImportRequest):
+    """Clone and register a public GitHub repository without storing credentials."""
+    try:
+        repository = clone_public_github_repository(
+            repository_id=request.repository_id,
+            name=request.name,
+            github_url=request.github_url,
+        )
+        return {"repository": repository}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
 # --------------------------------------------------
 # Create and save an investigation
 # --------------------------------------------------
 
-@app.post("/api/investigations")
+@app.post("/api/investigations", dependencies=[Depends(require_api_token)])
 def create_investigation(request: InvestigationRequest):
     """Run an investigation and persist the resulting report."""
 
@@ -142,6 +306,7 @@ def create_investigation(request: InvestigationRequest):
         result = run_investigation(
             repository_id=request.repository_id,
             task=description,
+            max_iterations=request.max_iterations,
         )
 
     except HTTPException:
@@ -208,7 +373,7 @@ def create_investigation(request: InvestigationRequest):
 # Investigation history
 # --------------------------------------------------
 
-@app.get("/api/investigations")
+@app.get("/api/investigations", dependencies=[Depends(require_api_token)])
 def investigations(
     limit: int = Query(
         default=50,
@@ -236,7 +401,7 @@ def investigations(
 # Retrieve one investigation
 # --------------------------------------------------
 
-@app.get("/api/investigations/{investigation_id}")
+@app.get("/api/investigations/{investigation_id}", dependencies=[Depends(require_api_token)])
 def investigation_detail(investigation_id: int):
     """Return a saved investigation and its evidence."""
 

@@ -14,7 +14,7 @@ import subprocess
 import sys
 import tempfile
 import time
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
@@ -30,19 +30,8 @@ DEFAULT_EXECUTION_TIMEOUT = 5.0
 # Maximum stdout/stderr capture size in bytes to prevent memory exhaustion
 MAX_OUTPUT_BYTES = 50_000
 
-# Environment variables that must never leak to sandboxed subprocesses
-SENSITIVE_ENV_VARS = {
-    "NVIDIA_API_KEY",
-    "OPENAI_API_KEY",
-    "ANTHROPIC_API_KEY",
-    "AWS_SECRET_ACCESS_KEY",
-    "AWS_ACCESS_KEY_ID",
-    "GITHUB_TOKEN",
-    "GIT_TOKEN",
-}
-
-
-# Windows Job Object definitions for OS-enforced isolation (Requirement 2)
+# Windows Job Object definitions for resource limits.  Python audit hooks in
+# sandbox_runner.py enforce the runtime policy; this job limits process scope.
 if sys.platform == "win32":
     import ctypes
     from ctypes import wintypes
@@ -80,35 +69,32 @@ if sys.platform == "win32":
             ("PeakJobMemoryLimit", ctypes.c_size_t),
         ]
 
-    def _create_isolated_job() -> int | None:
+    def _create_isolated_job() -> int:
         """Create a Windows Job Object with kill-on-close, memory limits, and process limits."""
-        try:
-            kernel32 = ctypes.windll.kernel32
-            job = kernel32.CreateJobObjectW(None, None)
-            if not job:
-                return None
+        kernel32 = ctypes.windll.kernel32
+        job = kernel32.CreateJobObjectW(None, None)
+        if not job:
+            raise OSError("CreateJobObjectW failed")
 
-            info = _JOBOBJECT_EXTENDED_LIMIT_INFORMATION()
-            # 0x2000 = KILL_ON_JOB_CLOSE, 0x0008 = ACTIVE_PROCESS_LIMIT, 0x0200 = JOB_MEMORY_LIMIT
-            info.BasicLimitInformation.LimitFlags = 0x2000 | 0x0008 | 0x0200
-            info.BasicLimitInformation.ActiveProcessLimit = 5
-            info.JobMemoryLimit = 256 * 1024 * 1024  # 256 MB memory limit
-            kernel32.SetInformationJobObject(
-                job,
-                9,  # JobObjectExtendedLimitInformation
-                ctypes.byref(info),
-                ctypes.sizeof(info),
-            )
-            return job
-        except Exception:
-            return None
+        info = _JOBOBJECT_EXTENDED_LIMIT_INFORMATION()
+        # 0x2000 = KILL_ON_JOB_CLOSE, 0x0008 = ACTIVE_PROCESS_LIMIT, 0x0200 = JOB_MEMORY_LIMIT
+        info.BasicLimitInformation.LimitFlags = 0x2000 | 0x0008 | 0x0200
+        info.BasicLimitInformation.ActiveProcessLimit = 5
+        info.JobMemoryLimit = 256 * 1024 * 1024  # 256 MB memory limit
+        configured = kernel32.SetInformationJobObject(
+            job,
+            9,  # JobObjectExtendedLimitInformation
+            ctypes.byref(info),
+            ctypes.sizeof(info),
+        )
+        if not configured:
+            kernel32.CloseHandle(job)
+            raise OSError("SetInformationJobObject failed")
+        return job
 
-    def _assign_process_to_job(job: int | None, proc_handle: int) -> None:
-        if job and proc_handle:
-            try:
-                ctypes.windll.kernel32.AssignProcessToJobObject(job, proc_handle)
-            except Exception:
-                pass
+    def _assign_process_to_job(job: int, proc_handle: int) -> None:
+        if not proc_handle or not ctypes.windll.kernel32.AssignProcessToJobObject(job, proc_handle):
+            raise OSError("AssignProcessToJobObject failed")
 
     def _close_job(job: int | None) -> None:
         if job:
@@ -166,7 +152,7 @@ def _classify_failure(exit_code: int, timed_out: bool, stderr: str, stdout: str)
     tb_match = re.search(r"(Traceback \(most recent call last\):[\s\S]+)", combined)
     tb_snippet = tb_match.group(1).strip()[-2000:] if tb_match else None
 
-    if "OS-Enforced Sandbox Violation" in combined:
+    if "Sandbox violation:" in combined:
         classification = "security_violation"
         exc_type = exc_type or "SecurityViolation"
     elif exc_type in ("ImportError", "ModuleNotFoundError"):
@@ -188,14 +174,14 @@ def screen_test_ast(code: str) -> tuple[bool, str | None]:
     Static safety screening of reproduction script before execution.
 
     Rejects obvious host-destructive primitives (AST heuristic defense).
-    OS-level isolation remains the primary safety boundary.
+    The execution harness provides the runtime safety boundary.
     """
     try:
         tree = ast.parse(code)
     except SyntaxError as err:
         return False, f"Syntax error in test script: {err}"
 
-    forbidden_modules = {"shutil", "socket", "http", "urllib", "requests", "ctypes"}
+    forbidden_modules = {"shutil", "socket", "http", "urllib", "ctypes"}
     forbidden_calls = {"system", "popen", "spawn", "rmtree", "unlink", "kill"}
 
     for node in ast.walk(tree):
@@ -227,10 +213,14 @@ class ShadowWorkspace:
     patches, and test files are isolated to this shadow directory.
     """
 
-    def __init__(self, repo_root: str):
+    def __init__(self, repo_root: str, python_executable: str | None = None):
         self.repo_root = Path(repo_root).resolve()
         if not self.repo_root.is_dir():
             raise ValueError(f"Repository root does not exist: {repo_root}")
+
+        self.python_executable = Path(python_executable or sys.executable).resolve()
+        if not self.python_executable.is_file():
+            raise ValueError(f"Python runtime does not exist: {self.python_executable}")
 
         self._temp_dir: tempfile.TemporaryDirectory | None = None
         self.shadow_root: Path | None = None
@@ -254,6 +244,12 @@ class ShadowWorkspace:
         """Copy repository files to shadow root, respecting exclusions and bounds."""
         for item in self.repo_root.rglob("*"):
             try:
+                resolved_item = item.resolve()
+                # Never mirror a symlink that resolves outside of the registered
+                # repository: it could disclose arbitrary host files.
+                if not resolved_item.is_relative_to(self.repo_root):
+                    continue
+
                 rel_path = item.relative_to(self.repo_root)
 
                 if _is_excluded(rel_path):
@@ -267,9 +263,9 @@ class ShadowWorkspace:
                 if item.is_dir():
                     dest.mkdir(parents=True, exist_ok=True)
                 elif item.is_file():
-                    if item.stat().st_size <= MAX_FILE_SIZE:
+                    if resolved_item.stat().st_size <= MAX_FILE_SIZE:
                         dest.parent.mkdir(parents=True, exist_ok=True)
-                        shutil.copy2(item, dest)
+                        shutil.copy2(resolved_item, dest)
             except (OSError, ValueError):
                 continue
 
@@ -308,6 +304,37 @@ class ShadowWorkspace:
 
         return target.read_text(encoding="utf-8", errors="replace")
 
+    def _sandbox_environment(self) -> dict[str, str]:
+        """Build a minimal, deterministic environment for executed code.
+
+        This allow-list prevents unrelated credentials, package configuration,
+        and user paths from leaking into a validation run.
+        """
+        if not self.shadow_root:
+            raise RuntimeError("Shadow workspace is not active.")
+
+        sandbox_temp = self.shadow_root / ".devpilot-tmp"
+        sandbox_temp.mkdir(exist_ok=True)
+        system_root = os.environ.get("SystemRoot", r"C:\Windows")
+        py_dir = str(self.python_executable.parent)
+        return {
+            "ALL_PROXY": "http://127.0.0.1:9",
+            "HTTP_PROXY": "http://127.0.0.1:9",
+            "HTTPS_PROXY": "http://127.0.0.1:9",
+            "NO_PROXY": "",
+            "PATH": f"{py_dir};{system_root}\\System32;{system_root}",
+            "PYTHONDONTWRITEBYTECODE": "1",
+            "PYTHONHASHSEED": "0",
+            "PYTHONNOUSERSITE": "1",
+            "PYTHONPATH": str(self.shadow_root),
+            "PYTHONUNBUFFERED": "1",
+            "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1",
+            "SystemRoot": system_root,
+            "TEMP": str(sandbox_temp),
+            "TMP": str(sandbox_temp),
+            "WINDIR": os.environ.get("WINDIR", system_root),
+        }
+
     def execute_script(
         self,
         script_rel_path: str,
@@ -317,8 +344,8 @@ class ShadowWorkspace:
         """
         Execute a script inside the shadow workspace in a time-limited subprocess.
 
-        Enforces OS-level and C-runtime boundaries via Windows Job Objects and Python
-        runtime audit hooks (blocking raw socket calls and writes outside shadow root).
+        Enforces Windows Job Object resource limits and an audit-hook runtime
+        policy that blocks network access and host filesystem access.
         """
         if not self.shadow_root:
             raise RuntimeError("Shadow workspace is not active.")
@@ -335,7 +362,7 @@ class ShadowWorkspace:
                 exception_message=f"Script not found: {script_rel_path}",
             )
 
-        # Static AST screening (unless explicitly bypassed for adversarial verification of OS boundary)
+        # Static AST screening supplements the runtime boundary.
         if not bypass_ast_screen:
             script_code = script_target.read_text(encoding="utf-8", errors="replace")
             safe, reason = screen_test_ast(script_code)
@@ -350,21 +377,7 @@ class ShadowWorkspace:
                     exception_message=reason,
                 )
 
-        # Build clean environment: strip secret keys, isolate python site-packages, block outbound network
-        env = {k: v for k, v in os.environ.items() if k not in SENSITIVE_ENV_VARS}
-        env["HTTP_PROXY"] = "http://127.0.0.1:9"
-        env["HTTPS_PROXY"] = "http://127.0.0.1:9"
-        env["ALL_PROXY"] = "http://127.0.0.1:9"
-        env["NO_PROXY"] = ""
-        env["PYTHONPATH"] = str(self.shadow_root)
-        env["PYTHONNOUSERSITE"] = "1"
-        env["PYTHONDONTWRITEBYTECODE"] = "1"
-        env["PYTHONUNBUFFERED"] = "1"
-
-        # Constrain PATH to SystemRoot and Python directory (Restricted filesystem execution boundary)
-        system_root = os.environ.get("SystemRoot", r"C:\Windows")
-        py_dir = str(Path(sys.executable).parent)
-        env["PATH"] = f"{py_dir};{system_root}\\System32;{system_root}"
+        env = self._sandbox_environment()
 
         start_time = time.perf_counter()
         timed_out = False
@@ -372,12 +385,25 @@ class ShadowWorkspace:
         stderr_text = ""
         exit_code = 0
 
-        # Enforce OS-level process isolation and resource limits via Job Object
-        job = _create_isolated_job()
+        # On Windows, fail closed if resource-limited process isolation cannot
+        # be set up.  A script must never be marked verified without it.
+        try:
+            job = _create_isolated_job()
+        except OSError as exc:
+            return ExecutionResult(
+                exit_code=1,
+                stdout="",
+                stderr=f"Sandbox setup failed: {exc}",
+                duration_seconds=round(time.perf_counter() - start_time, 3),
+                failure_classification="environment_error",
+                exception_type="SandboxSetupError",
+                exception_message=str(exc),
+            )
         runner_script = Path(__file__).resolve().parent / "sandbox_runner.py"
+        proc: subprocess.Popen[str] | None = None
         try:
             cmd = [
-                sys.executable,
+                str(self.python_executable),
                 "-I",
                 str(runner_script),
                 str(self.shadow_root),
@@ -408,6 +434,9 @@ class ShadowWorkspace:
                 stderr_text = (stderr_raw or "")[:MAX_OUTPUT_BYTES]
                 stderr_text += f"\nProcess timed out after {timeout} seconds."
         except Exception as exc:
+            if proc and proc.poll() is None:
+                proc.kill()
+                proc.communicate()
             exit_code = 1
             stderr_text = f"Execution failed: {exc}"
         finally:
@@ -464,51 +493,30 @@ class ShadowWorkspace:
         if not test_files:
             return None, "No existing regression test suite found in repository."
 
-        env = {k: v for k, v in os.environ.items() if k not in SENSITIVE_ENV_VARS}
-        env["HTTP_PROXY"] = "http://127.0.0.1:9"
-        env["HTTPS_PROXY"] = "http://127.0.0.1:9"
-        env["ALL_PROXY"] = "http://127.0.0.1:9"
-        env["NO_PROXY"] = ""
-        env["PYTHONPATH"] = str(self.shadow_root)
-        env["PYTHONNOUSERSITE"] = "1"
-        env["PYTHONDONTWRITEBYTECODE"] = "1"
-        env["PYTHONUNBUFFERED"] = "1"
+        # Use the same protected runner as the reproduction test.  A passing
+        # subset is not a passing suite, so all discovered tests are listed.
+        runner_name = ".devpilot_regression_runner.py"
+        quoted_files = ", ".join(repr(path) for path in sorted(test_files))
+        self.write_test_file(
+            runner_name,
+            "import pytest\n"
+            f"raise SystemExit(pytest.main(['-q', {quoted_files}]))\n",
+        )
+        result = self.execute_script(runner_name, timeout=timeout)
+        output = (result.stdout + "\n" + result.stderr)[:MAX_OUTPUT_BYTES]
 
-        system_root = os.environ.get("SystemRoot", r"C:\Windows")
-        py_dir = str(Path(sys.executable).parent)
-        env["PATH"] = f"{py_dir};{system_root}\\System32;{system_root}"
-
-        job = _create_isolated_job()
-        try:
-            cmd = [sys.executable, "-m", "pytest", "-q"] + test_files[:20]
-            proc = subprocess.Popen(
-                cmd,
-                cwd=str(self.shadow_root),
-                env=env,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-            )
-            if sys.platform == "win32":
-                _assign_process_to_job(job, getattr(proc, "_handle", 0))
-
-            stdout_raw, stderr_raw = proc.communicate(timeout=timeout)
-            out = (stdout_raw or "") + (stderr_raw or "")
-            return (proc.returncode == 0, out[:MAX_OUTPUT_BYTES])
-        except subprocess.TimeoutExpired:
-            proc.kill()
-            return (False, f"Regression tests timed out after {timeout} seconds.")
-        except Exception as exc:
-            return (None, f"Could not run regression suite: {exc}")
-        finally:
-            _close_job(job)
-
+        if result.timed_out:
+            return False, f"Regression tests timed out after {timeout} seconds.\n{output}"
+        if result.failure_classification in {"security_violation", "environment_error", "import_error"}:
+            return False, f"Regression suite did not complete safely.\n{output}"
+        return result.exit_code == 0, output
 
 def run_reproduction_test(
     repo_root: str,
     test_code: str,
     expected_exception: str | None = None,
     timeout: float = DEFAULT_EXECUTION_TIMEOUT,
+    python_executable: str | None = None,
 ) -> dict[str, Any]:
     """
     Execute a reproduction test inside an isolated shadow workspace (Phase 2).
@@ -531,7 +539,23 @@ def run_reproduction_test(
             "test_code": test_code,
         }
 
-    with ShadowWorkspace(str(root)) as shadow:
+    try:
+        workspace = ShadowWorkspace(str(root), python_executable=python_executable)
+    except ValueError as exc:
+        return {
+            "reproduced": False,
+            "status": "environment_error",
+            "exit_code": 1,
+            "exception_type": "RuntimeConfigurationError",
+            "exception_message": str(exc),
+            "traceback": None,
+            "stdout": "",
+            "stderr": str(exc),
+            "duration_seconds": 0.0,
+            "test_code": test_code,
+        }
+
+    with workspace as shadow:
         shadow.write_test_file("reproduce_bug.py", test_code)
         result = shadow.execute_script("reproduce_bug.py", timeout=timeout)
 
@@ -581,6 +605,7 @@ def validate_patch(
     timeout: float = DEFAULT_EXECUTION_TIMEOUT,
     run_regression_tests: bool = True,
     regression_test_code: str | None = None,
+    python_executable: str | None = None,
 ) -> dict[str, Any]:
     """
     Apply a narrowly scoped patch only to a shadow copy and validate it against the reproduction test (Phase 3).
@@ -634,6 +659,7 @@ def validate_patch(
         test_code=test_code,
         expected_exception=expected_exception,
         timeout=timeout,
+        python_executable=python_executable,
     )
 
     if not pre_fix["reproduced"]:
@@ -659,7 +685,27 @@ def validate_patch(
         }
 
     # 2. Patch and validate in shadow workspace
-    with ShadowWorkspace(str(root)) as shadow:
+    try:
+        workspace = ShadowWorkspace(str(root), python_executable=python_executable)
+    except ValueError as exc:
+        return {
+            "valid": False,
+            "verification_status": "environment_error",
+            "analysis_passed": True,
+            "reproduction_confirmed": bool(pre_fix.get("reproduced")),
+            "fix_verified": False,
+            "reproduction_resolved": False,
+            "regression_suite_passed": None,
+            "reason": str(exc),
+            "patched_file": str(rel_patch_file.as_posix()),
+            "diff": unified_diff,
+            "pre_fix": pre_fix,
+            "post_fix": None,
+            "test_code": test_code,
+            "regression_output": "",
+        }
+
+    with workspace as shadow:
         shadow.apply_patch(str(rel_patch_file), patched_content)
         shadow.write_test_file("reproduce_bug.py", test_code)
         post_fix_res = shadow.execute_script("reproduce_bug.py", timeout=timeout)
@@ -688,11 +734,11 @@ def validate_patch(
     # fix_verified strictly requires:
     # 1. reproduction was confirmed on baseline
     # 2. reproduction was resolved by the patch
-    # 3. regression test suite did NOT fail
+    # 3. the complete existing regression test suite passed
     fix_verified = bool(
         reproduction_confirmed
         and reproduction_resolved
-        and (regression_passed is not False)
+        and regression_passed is True
     )
 
     # Calculate unambiguous verification state (Requirement 1)
@@ -700,10 +746,10 @@ def validate_patch(
         verification_status = "reproduction_failed"
     elif regression_passed is False:
         verification_status = "regression_failed"
+    elif regression_passed is None and reproduction_resolved:
+        verification_status = "regression_suite_missing"
     elif fix_verified:
-        verification_status = (
-            "fully_verified" if regression_passed is True else "fix_verified_no_regression_suite"
-        )
+        verification_status = "fully_verified"
     else:
         verification_status = "fix_failed"
 

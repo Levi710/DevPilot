@@ -14,6 +14,11 @@ from openai import (
     APITimeoutError,
 )
 
+try:
+    from evidence_safety import as_untrusted_evidence
+except ImportError:
+    from devpilot.evidence_safety import as_untrusted_evidence
+
 # Import only the repository tools the agent is permitted to execute.
 from tools import search_code, read_file, run_reproduction_test, validate_patch
 
@@ -33,7 +38,7 @@ SEARCH_CODE_TOOL = {
     "function": {
         "name": "search_code",
         "description": (
-            "Search Python source files in the selected repository using "
+            "Search common source-code files in the selected repository using "
             "plain-text substring matching (NOT regex; do not backslash-escape "
             "characters like '(', ')', or '/'). "
             "Returns matching lines with repository-relative file paths and "
@@ -45,7 +50,7 @@ SEARCH_CODE_TOOL = {
             "properties": {
                 "query": {
                     "type": "string",
-                    "description": "Text to search for in Python files (plain substring).",
+                    "description": "Text to search for in common source-code files (plain substring).",
                 }
             },
             "required": ["query"],
@@ -123,7 +128,7 @@ VALIDATE_PATCH_TOOL = {
     "function": {
         "name": "validate_patch",
         "description": (
-            "Test a proposed patch in an isolated shadow copy without modifying the real repository. "
+            "Test a proposed Python-project patch in an isolated shadow copy without modifying the real repository. "
             "Reruns the reproduction test to ensure the failure is resolved, checks regression test suites "
             "if present, and generates a unified diff. Proves the fix works empirically."
         ),
@@ -167,18 +172,23 @@ load_dotenv()
 api_key = os.getenv("NVIDIA_API_KEY")
 MODEL = os.getenv("NVIDIA_MODEL")
 
-# Fail early with a clear message if the configuration is incomplete.
-if not api_key:
-    raise RuntimeError("NVIDIA_API_KEY is missing from your environment.")
-
-if not MODEL:
-    raise RuntimeError("NVIDIA_MODEL is missing from your environment.")
-
 client = OpenAI(
     base_url="https://integrate.api.nvidia.com/v1",
-    api_key=api_key,
+    # Importing repository tools and collecting tests must not require a
+    # provider credential. The real configuration check happens immediately
+    # before an outbound model request.
+    api_key=api_key or "not-configured",
     timeout=MODEL_REQUEST_TIMEOUT_SECONDS,
 )
+
+
+def _require_model_configuration() -> None:
+    """Fail at the external-call boundary, never during module import."""
+
+    if not api_key:
+        raise RuntimeError("NVIDIA_API_KEY is missing from your environment.")
+    if not MODEL:
+        raise RuntimeError("NVIDIA_MODEL is missing from your environment.")
 
 
 def _log_provider_error(exc: APIStatusError) -> None:
@@ -223,7 +233,11 @@ def _log_provider_error(exc: APIStatusError) -> None:
     )
 
 
-def execute_tool(tool_call, repo_root: str):
+def execute_tool(
+    tool_call,
+    repo_root: str,
+    python_executable: str | None = None,
+):
     """Validate and execute one approved tool inside the selected repository."""
 
     # Decode the JSON arguments provided by the model.
@@ -279,6 +293,7 @@ def execute_tool(tool_call, repo_root: str):
             test_code=test_code,
             expected_exception=expected_exc,
             repo_root=repo_root,
+            python_executable=python_executable,
         )
 
     if tool_name == "validate_patch":
@@ -304,6 +319,7 @@ def execute_tool(tool_call, repo_root: str):
             test_code=test_code,
             expected_exception=expected_exc,
             repo_root=repo_root,
+            python_executable=python_executable,
         )
 
     # Never allow the model to invoke arbitrary Python functions.
@@ -312,6 +328,7 @@ def execute_tool(tool_call, repo_root: str):
 
 def _call_model_with_retry(request_kwargs: dict, evidence: list, step: int):
     """Execute a model completion with bounded retry for transient provider errors."""
+    _require_model_configuration()
     attempt = 0
     while True:
         try:
@@ -406,11 +423,13 @@ def run_investigation(
     if repository.get("status") != "connected":
         raise ValueError(f"Repository '{repository_id}' is unavailable.")
 
-    # GitHub repositories need a separate adapter; do not treat them as folders.
-    if repository.get("source_type") != "local":
-        raise ValueError("This agent currently supports local repositories only.")
+    # Public GitHub imports are cloned into a managed local checkout before the
+    # agent sees them, so they use the same containment and sandbox controls.
+    if repository.get("source_type") not in {"local", "github_public_clone"}:
+        raise ValueError("This repository source is not available for local investigation.")
 
     repo_root = repository["location"]
+    python_executable = repository.get("python_executable")
 
     # Give the model a clear task and constraints. Repository file contents are
     # untrusted input and must not override these investigation instructions.
@@ -457,6 +476,8 @@ def run_investigation(
                 "       with expected_exception to empirically prove the bug reproduces for the expected reason.\n"
                 "     - When proposing a fix, call validate_patch with the corrected file contents and the test. "
                 "       This verifies the patch in a shadow copy, checks regression suites, and provides a verified diff.\n"
+                "     - The execution harness currently runs Python only. For another language, provide source-based "
+                "       analysis and explicitly state that empirical execution is unavailable; do not claim a fix is verified.\n"
                 "- CONTRACT RULE (EMPTY-LIST AND EDGE CASES):\n"
                 "  Handling edge cases like empty lists depends on the intended API contract. "
                 "  Returning 0 is appropriate only if defined by the specification; raising ValueError or returning None "
@@ -597,7 +618,11 @@ def run_investigation(
                 })
             else:
                 try:
-                    result = execute_tool(tool_call, repo_root=repo_root)
+                    result = execute_tool(
+                        tool_call,
+                        repo_root=repo_root,
+                        python_executable=python_executable,
+                    )
 
                     if tool_name == "validate_patch" and isinstance(result, dict):
                         verification = result
@@ -635,7 +660,7 @@ def run_investigation(
             messages.append({
                 "role": "tool",
                 "tool_call_id": tool_id,
-                "content": result_text,
+                "content": as_untrusted_evidence(result_text),
             })
 
     # No extra model request is made after the configured iteration budget.
