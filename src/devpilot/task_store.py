@@ -53,7 +53,43 @@ class DeliveryTaskAcceptance:
     task: DurableTask
 
 
-_ALLOWED_METADATA_KEYS = frozenset({"trigger", "issue_number", "issue_node_id", "requested_by"})
+TASK_STATES = frozenset({
+    "queued",
+    "policy_checked",
+    "worker_provisioning",
+    "checkout_ready",
+    "investigating",
+    "patch_validating",
+    "awaiting_approval",
+    "failed",
+    "cancelled",
+})
+
+VALID_TASK_TRANSITIONS: dict[str, set[str]] = {
+    "queued": {"policy_checked", "failed", "cancelled"},
+    "policy_checked": {"worker_provisioning", "failed", "cancelled"},
+    "worker_provisioning": {"checkout_ready", "failed", "cancelled"},
+    "checkout_ready": {"investigating", "failed", "cancelled"},
+    "investigating": {"patch_validating", "awaiting_approval", "failed", "cancelled"},
+    "patch_validating": {"awaiting_approval", "failed", "cancelled"},
+    "awaiting_approval": {"failed", "cancelled"},
+    "failed": set(),
+    "cancelled": set(),
+}
+
+_ALLOWED_METADATA_KEYS = frozenset({
+    "trigger",
+    "issue_number",
+    "issue_node_id",
+    "requested_by",
+    "idempotency_key",
+    "worker_image",
+    "step",
+    "reason",
+    "error",
+    "mode",
+    "exit_code",
+})
 _SENSITIVE_METADATA_KEY = re.compile(r"(?i)(token|secret|password|authorization|private.?key)")
 _GITHUB_CREDENTIAL = re.compile(r"\b(?:gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,})\b")
 _SCHEMA_NAME = re.compile(r"^[a-z][a-z0-9_]{0,62}$")
@@ -97,7 +133,11 @@ class PostgresTaskStore:
                 source TEXT NOT NULL,
                 repository_node_id TEXT NOT NULL,
                 base_sha TEXT NOT NULL,
-                state TEXT NOT NULL CHECK (state IN ('queued', 'policy_checked', 'cancelled', 'failed')),
+                state TEXT NOT NULL CHECK (state IN (
+                    'queued', 'policy_checked', 'worker_provisioning',
+                    'checkout_ready', 'investigating', 'patch_validating',
+                    'awaiting_approval', 'failed', 'cancelled'
+                )),
                 source_delivery_id TEXT UNIQUE REFERENCES webhook_deliveries(delivery_id),
                 request_metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
                 created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -130,6 +170,25 @@ class PostgresTaskStore:
                 cursor.execute(
                     "CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_source_delivery_id "
                     "ON tasks(source_delivery_id) WHERE source_delivery_id IS NOT NULL"
+                )
+                # Ensure check constraint includes all lifecycle states
+                cursor.execute(
+                    """
+                    DO $$
+                    BEGIN
+                        ALTER TABLE tasks DROP CONSTRAINT IF EXISTS tasks_state_check;
+                        ALTER TABLE tasks ADD CONSTRAINT tasks_state_check CHECK (
+                            state IN (
+                                'queued', 'policy_checked', 'worker_provisioning',
+                                'checkout_ready', 'investigating', 'patch_validating',
+                                'awaiting_approval', 'failed', 'cancelled'
+                            )
+                        );
+                    EXCEPTION
+                        WHEN undefined_table THEN
+                            NULL;
+                    END $$;
+                    """
                 )
         except Exception as exc:
             raise TaskStoreError("Could not initialize the PostgreSQL task store.") from exc
@@ -331,6 +390,75 @@ class PostgresTaskStore:
             TaskAuditEvent(row["event_id"], row["event_type"], dict(row["event_metadata"]), row["created_at"])
             for row in rows
         ]
+
+    def transition_task_state(
+        self,
+        *,
+        task_id: str,
+        from_state: str,
+        to_state: str,
+        idempotency_key: str | None = None,
+        event_metadata: dict[str, Any] | None = None,
+    ) -> DurableTask:
+        """Atomically transition a task's lifecycle state with an audit event."""
+        parsed_id = _parse_task_id(task_id)
+        if to_state not in TASK_STATES:
+            raise TaskStoreError(f"Invalid target task state: {to_state}")
+        if from_state not in TASK_STATES:
+            raise TaskStoreError(f"Invalid source task state: {from_state}")
+        if to_state not in VALID_TASK_TRANSITIONS.get(from_state, set()):
+            raise TaskStoreError(f"Cannot transition task from '{from_state}' to '{to_state}'.")
+
+        metadata = _validated_metadata(event_metadata)
+        if idempotency_key is not None:
+            if not isinstance(idempotency_key, str) or not (1 <= len(idempotency_key) <= 128):
+                raise TaskStoreError("idempotency_key must be a non-empty string up to 128 characters.")
+            metadata["idempotency_key"] = idempotency_key
+
+        try:
+            with self._connect() as connection, connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    UPDATE tasks
+                    SET state = %s
+                    WHERE task_id = %s AND state = %s
+                    RETURNING task_id, source, repository_node_id, base_sha, state, created_at
+                    """,
+                    (to_state, parsed_id, from_state),
+                )
+                row = cursor.fetchone()
+                if row is None:
+                    cursor.execute(
+                        "SELECT task_id, source, repository_node_id, base_sha, state, created_at "
+                        "FROM tasks WHERE task_id = %s",
+                        (parsed_id,),
+                    )
+                    existing = cursor.fetchone()
+                    if existing is None:
+                        raise TaskStoreError(f"Durable task {task_id} not found.")
+                    if existing["state"] == to_state:
+                        # Idempotent match: already in desired target state
+                        return _task_from_row(existing)
+                    raise TaskStoreError(
+                        f"Task {task_id} state conflict: expected '{from_state}', but found '{existing['state']}'."
+                    )
+                audit_meta = {
+                    "from_state": from_state,
+                    "to_state": to_state,
+                    **metadata,
+                }
+                cursor.execute(
+                    """
+                    INSERT INTO task_audit_events (task_id, event_type, event_metadata)
+                    VALUES (%s, 'task_state_transitioned', %s::jsonb)
+                    """,
+                    (parsed_id, json.dumps(audit_meta, ensure_ascii=False)),
+                )
+        except TaskStoreError:
+            raise
+        except Exception as exc:
+            raise TaskStoreError("Could not transition task state.") from exc
+        return _task_from_row(row)
 
 
 def _valid_delivery_input(delivery_id: str, event_name: str, payload: bytes) -> bool:

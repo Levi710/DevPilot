@@ -116,12 +116,13 @@ DevPilot/
 │       ├── repository_registry.py    # Local & public GitHub repo registry
 │       ├── sandbox.py                # Shadow workspaces & Windows Job Objects
 │       ├── sandbox_runner.py         # Subprocess runner with PEP 578 audit hooks
+│       ├── task_orchestrator.py      # Lifecycle state machine orchestrator
 │       ├── task_policy.py            # Fail-closed repository capability policy
 │       ├── task_store.py             # PostgreSQL durable task state & audit log
 │       ├── tools.py                  # Approved inspection and verification tools
 │       └── webhook_service.py        # Webhook payload parsing & queue ingress
 ├── test_fixtures/                    # Minimal reproduction fixture repositories
-├── tests/                            # Comprehensive automated pytest suite (148 tests)
+├── tests/                            # Comprehensive automated pytest suite (156 tests)
 ├── requirements.txt                  # Pinned backend dependencies
 ├── .env.example                      # Documented configuration template
 ├── .gitignore
@@ -303,6 +304,7 @@ DevPilot should identify the off-by-one error, explain the skipped element, and 
 | GET | `/api/investigations/{id}` | Retrieve a specific investigation and evidence | Token (opt-in / LAN) |
 | POST | `/api/github/webhooks` | Ingress pull-request webhook into durable queue | HMAC SHA-256 |
 | GET | `/api/tasks/{task_id}` | Retrieve durable task state and audit events | Token (opt-in / LAN) |
+| POST | `/api/tasks/{task_id}/process` | Advance durable task through its lifecycle | Token (opt-in / LAN) |
 
 When `DEVPILOT_API_TOKEN` is configured or LAN mode is active, endpoints requiring authorization expect an `X-DevPilot-Token` header. The Vite frontend proxy attaches this server-side when running with LAN mode enabled.
 
@@ -319,10 +321,10 @@ Run the automated test suite from the project root:
 The latest recorded test result across the full production foundation, security, evaluation, and sandbox suites:
 
 ```text
-145 passed, 3 skipped, 6 warnings in 10.63s
+153 passed, 3 skipped in 10.25s
 ```
 
-All 148 test items evaluate repository registry bounds, token authentication, GitHub App RS256 JWT minting, webhook signature enforcement, isolated checkouts, task state transitions, Job Object quotas, and PEP 578 runtime audit traps.
+All 156 test items evaluate repository registry bounds, token authentication, GitHub App RS256 JWT minting, webhook signature enforcement, isolated checkouts, task state transitions, TaskOrchestrator lifecycle transitions, Job Object quotas, and PEP 578 runtime audit traps.
 
 ## Evaluation
 

@@ -3,6 +3,7 @@
 
 import hmac
 import os
+from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -37,18 +38,29 @@ from investigation_store import (
 try:
     from task_store import PostgresTaskStore, TaskStoreError
     from webhook_service import MAX_WEBHOOK_BODY_BYTES, WebhookIngressError, accept_pull_request_webhook, read_bounded_body
+    from task_orchestrator import TaskOrchestrator, TaskOrchestratorError
+    from task_policy import RepositoryPolicy, TaskMode
 except ImportError:
     from devpilot.task_store import PostgresTaskStore, TaskStoreError
     from devpilot.webhook_service import MAX_WEBHOOK_BODY_BYTES, WebhookIngressError, accept_pull_request_webhook, read_bounded_body
+    from devpilot.task_orchestrator import TaskOrchestrator, TaskOrchestratorError
+    from devpilot.task_policy import RepositoryPolicy, TaskMode
 
 
 # --------------------------------------------------
 # Application setup
 # --------------------------------------------------
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Initialize persistent investigation storage on application startup."""
+    initialize_store()
+    yield
+
 app = FastAPI(
     title="DevPilot API",
     version="0.2.0",
+    lifespan=lifespan,
 )
 
 _API_TOKEN = os.getenv("DEVPILOT_API_TOKEN", "")
@@ -120,15 +132,7 @@ class PublicGitHubImportRequest(BaseModel):
     github_url: str = Field(min_length=1, max_length=500)
 
 
-# --------------------------------------------------
-# Startup
-# --------------------------------------------------
 
-@app.on_event("startup")
-def startup() -> None:
-    """Initialize persistent investigation storage."""
-
-    initialize_store()
 
 
 # --------------------------------------------------
@@ -222,6 +226,47 @@ def get_durable_task(task_id: str):
             for event in events
         ],
     }
+
+
+@app.post("/api/tasks/{task_id}/process", dependencies=[Depends(require_api_token)])
+def process_durable_task(task_id: str):
+    """Process a queued durable task through its lifecycle steps."""
+    if not _TASK_DATABASE_URL:
+        raise HTTPException(status_code=503, detail="Durable task storage is not configured.")
+    try:
+        store = PostgresTaskStore(_TASK_DATABASE_URL)
+        task = store.get_task(task_id)
+        if task is None:
+            raise HTTPException(status_code=404, detail="Durable task was not found.")
+
+        def _policy_lookup(node_id: str) -> RepositoryPolicy | None:
+            return RepositoryPolicy(
+                repository_node_id=node_id,
+                allowed_paths=("src", "tests"),
+                test_command=("pytest", "-q"),
+                dependency_recipe="requirements.txt",
+                allowed_mode=TaskMode.VALIDATE_PATCH,
+            )
+
+        orchestrator = TaskOrchestrator(
+            task_store=store,
+            policy_lookup=_policy_lookup,
+        )
+        updated_task = orchestrator.process_task(task_id)
+        return {
+            "task": {
+                "task_id": updated_task.task_id,
+                "state": updated_task.state,
+                "source": updated_task.source,
+                "repository_node_id": updated_task.repository_node_id,
+                "base_sha": updated_task.base_sha,
+                "created_at": updated_task.created_at.isoformat(),
+            }
+        }
+    except HTTPException:
+        raise
+    except RuntimeError:
+        raise HTTPException(status_code=503, detail="Durable task processing is unavailable.")
 
 
 # --------------------------------------------------

@@ -66,6 +66,24 @@ def test_task_store_rejects_unbounded_or_secret_like_metadata_before_connecting(
         )
 
 
+def test_task_store_rejects_invalid_state_transition_before_connecting():
+    store = PostgresTaskStore("postgresql://localhost/devpilot")
+    valid_uuid = str(uuid.uuid4())
+    with pytest.raises(TaskStoreError, match="UUID"):
+        store.transition_task_state(task_id="invalid", from_state="queued", to_state="policy_checked")
+    with pytest.raises(TaskStoreError, match="Invalid target task state"):
+        store.transition_task_state(task_id=valid_uuid, from_state="queued", to_state="unknown_state")
+    with pytest.raises(TaskStoreError, match="Invalid source task state"):
+        store.transition_task_state(task_id=valid_uuid, from_state="unknown_source", to_state="policy_checked")
+    with pytest.raises(TaskStoreError, match="Cannot transition task"):
+        # Skipping states directly from queued to awaiting_approval is illegal
+        store.transition_task_state(task_id=valid_uuid, from_state="queued", to_state="awaiting_approval")
+    with pytest.raises(TaskStoreError, match="idempotency_key"):
+        store.transition_task_state(
+            task_id=valid_uuid, from_state="queued", to_state="policy_checked", idempotency_key=""
+        )
+
+
 def test_postgres_store_atomically_deduplicates_delivery_and_task():
     """Run only when an explicit local test database URL is supplied."""
     if os.getenv("DEVPILOT_RUN_POSTGRES_INTEGRATION") != "1":
