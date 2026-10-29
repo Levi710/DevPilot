@@ -738,6 +738,126 @@ textarea::placeholder {
   white-space: pre;
 }
 
+.diff-card-container {
+  margin-bottom: 14px;
+}
+
+.patch-approval-card {
+  margin-top: 10px;
+  padding: 14px 16px;
+  background: linear-gradient(180deg, #071714 0%, #05100e 100%);
+  border: 1px solid #134e40;
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.patch-approval-card.mini {
+  margin-top: 8px;
+  padding: 8px 12px;
+}
+
+.patch-badge-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.patch-badge {
+  background: #064e3b;
+  color: #a7f3d0;
+  border: 1px solid #059669;
+  border-radius: 4px;
+  padding: 2px 8px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+}
+
+.patch-target-tag {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 11px;
+  color: #7dd3fc;
+  background: #082f49;
+  border: 1px solid #0284c7;
+  border-radius: 4px;
+  padding: 2px 7px;
+}
+
+.apply-patch-button {
+  min-height: 44px;
+  padding: 10px 18px;
+  background: linear-gradient(135deg, #059669 0%, #10b981 100%);
+  color: #ffffff;
+  border: 1px solid #34d399;
+  border-radius: 8px;
+  font-weight: 600;
+  font-size: 14px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  box-shadow: 0 4px 14px rgba(16, 185, 129, 0.25);
+  transition: all 0.2s ease;
+  width: 100%;
+}
+
+.apply-patch-button:hover:not(:disabled) {
+  background: linear-gradient(135deg, #047857 0%, #059669 100%);
+  box-shadow: 0 6px 18px rgba(16, 185, 129, 0.35);
+  transform: translateY(-1px);
+}
+
+.apply-patch-button:active:not(:disabled) {
+  transform: translateY(0);
+}
+
+.apply-patch-button:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
+.apply-patch-button.secondary {
+  background: #081a17;
+  border: 1px solid #10b981;
+  color: #a7f3d0;
+  box-shadow: none;
+}
+
+.apply-patch-button.secondary:hover:not(:disabled) {
+  background: #0d2823;
+}
+
+.patch-applied-banner {
+  background: #062b1b;
+  border: 1px solid #10b981;
+  border-radius: 8px;
+  padding: 12px 14px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: #ecfdf5;
+}
+
+.patch-applied-icon {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: #10b981;
+  color: #042f1f;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 800;
+  font-size: 15px;
+  flex-shrink: 0;
+}
+
 .history-arrow {
   color: #858ba0;
 }

@@ -3,6 +3,7 @@
 
 import hmac
 import os
+import shutil
 import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -144,6 +145,14 @@ class PublicGitHubImportRequest(BaseModel):
     repository_id: str = Field(min_length=1, max_length=100)
     name: str = Field(min_length=1, max_length=200)
     github_url: str = Field(min_length=1, max_length=500)
+
+
+class ApplyPatchRequest(BaseModel):
+    """Request body for applying an approved patch to the repository."""
+
+    repository_id: str = Field(min_length=1, max_length=200)
+    patch_file: str = Field(min_length=1, max_length=1000)
+    patched_content: str = Field(min_length=1, max_length=5000000)
 
 
 
@@ -477,3 +486,61 @@ def investigation_detail(investigation_id: int):
         )
 
     return record
+
+
+# --------------------------------------------------
+# Apply user-approved patch to repository
+# --------------------------------------------------
+
+@app.post("/api/patches/apply", dependencies=[Depends(require_api_token)])
+def apply_patch_to_repository(request: ApplyPatchRequest):
+    """Safely apply a user-approved verified fix directly to the target repository."""
+
+    repository = get_repository(request.repository_id)
+    if repository is None:
+        raise HTTPException(status_code=404, detail=f"Repository '{request.repository_id}' is not registered.")
+
+    if repository.get("status") != "connected":
+        raise HTTPException(status_code=400, detail=f"Repository '{request.repository_id}' is unavailable.")
+
+    repo_root = Path(repository["location"]).resolve()
+    target_rel = Path(request.patch_file)
+
+    if target_rel.is_absolute():
+        try:
+            target_rel = target_rel.relative_to(repo_root)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Patch file path must be repository-relative.")
+
+    target_file = (repo_root / target_rel).resolve()
+
+    # Enforce strict path containment
+    if not target_file.is_relative_to(repo_root):
+        raise HTTPException(status_code=403, detail="Security violation: target file escapes repository root.")
+
+    # Guard sensitive files and system directories
+    for part in target_rel.parts:
+        if part in {".git", ".env"} or (part.startswith(".") and part not in {".", ".."}):
+            raise HTTPException(status_code=403, detail="Cannot edit hidden, git, or environment files.")
+
+    if not target_file.is_file():
+        raise HTTPException(status_code=404, detail=f"Target file does not exist: {request.patch_file}")
+
+    # Create safety backup (.bak) before modifying
+    backup_file = target_file.with_suffix(target_file.suffix + ".bak")
+    try:
+        shutil.copy2(target_file, backup_file)
+
+        # Write patched content atomically
+        temp_file = target_file.with_suffix(target_file.suffix + ".tmp_patch")
+        temp_file.write_text(request.patched_content, encoding="utf-8")
+        temp_file.replace(target_file)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to apply patch to file: {exc}") from exc
+
+    return {
+        "status": "applied",
+        "patched_file": str(target_rel.as_posix()),
+        "backup_file": str(backup_file.name),
+        "message": f"Successfully applied fix to {target_rel.as_posix()}. Original file backed up.",
+    }

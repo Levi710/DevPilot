@@ -484,11 +484,19 @@ def run_investigation(
         if task_str:
             effective_task = (
                 f"{task_str}\n\n"
-                f"### Uploaded Error Screenshot Details:\n{screenshot_analysis}"
+                f"### Uploaded Error Screenshot Details:\n{screenshot_analysis}\n\n"
+                f"INVESTIGATION GOAL:\n"
+                f"Search the repository for the files and functions shown in this error, identify the bug, "
+                f"reproduce it with run_reproduction_test, and call validate_patch with the corrected file contents "
+                f"so the user can review and approve applying the fix directly from their phone."
             )
         else:
             effective_task = (
-                f"The user uploaded a screenshot of an error / bug:\n\n{screenshot_analysis}"
+                f"The user uploaded a screenshot of an error / bug without a text explanation:\n\n"
+                f"### Uploaded Error Screenshot Details:\n{screenshot_analysis}\n\n"
+                f"INVESTIGATION GOAL:\n"
+                f"Locate the error in the repository, read the relevant file, prove the bug with run_reproduction_test, "
+                f"and call validate_patch with the minimal verified fix so the user can review and approve the patch."
             )
     else:
         effective_task = task_str

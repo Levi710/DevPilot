@@ -113,3 +113,66 @@ def test_api_investigations_with_image_data():
     data = response.json()
     assert data["status"] == "completed"
     assert data["screenshot_analysis"] == "KeyError: 'user_id' in session handler"
+
+
+def test_apply_patch_success(tmp_path):
+    """Test applying an approved patch safely to a repository file."""
+    client = TestClient(app)
+
+    repo_dir = tmp_path / "my_project"
+    repo_dir.mkdir()
+    target_file = repo_dir / "calculator.py"
+    target_file.write_text("def add(a, b): return a - b\n", encoding="utf-8")
+
+    connected_repo = {
+        "repository_id": "test-repo",
+        "name": "My Project",
+        "status": "connected",
+        "source_type": "local",
+        "location": str(repo_dir),
+    }
+
+    with patch("devpilot.api.get_repository", return_value=connected_repo):
+        response = client.post(
+            "/api/patches/apply",
+            json={
+                "repository_id": "test-repo",
+                "patch_file": "calculator.py",
+                "patched_content": "def add(a, b): return a + b\n",
+            },
+        )
+
+    assert response.status_code == 200
+    res_data = response.json()
+    assert res_data["status"] == "applied"
+    assert target_file.read_text(encoding="utf-8") == "def add(a, b): return a + b\n"
+    backup = repo_dir / "calculator.py.bak"
+    assert backup.is_file()
+    assert backup.read_text(encoding="utf-8") == "def add(a, b): return a - b\n"
+
+
+def test_apply_patch_path_traversal_blocked(tmp_path):
+    """Path traversal attempt must be blocked with 403 or 400."""
+    client = TestClient(app)
+    repo_dir = tmp_path / "my_project"
+    repo_dir.mkdir()
+
+    connected_repo = {
+        "repository_id": "test-repo",
+        "name": "My Project",
+        "status": "connected",
+        "source_type": "local",
+        "location": str(repo_dir),
+    }
+
+    with patch("devpilot.api.get_repository", return_value=connected_repo):
+        response = client.post(
+            "/api/patches/apply",
+            json={
+                "repository_id": "test-repo",
+                "patch_file": "../outside.py",
+                "patched_content": "malicious content",
+            },
+        )
+
+    assert response.status_code in {400, 403}

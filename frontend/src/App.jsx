@@ -62,6 +62,11 @@ function App() {
   const [investigationResult, setInvestigationResult] = useState(null);
   const [investigationError, setInvestigationError] = useState("");
 
+  // Patch approval and direct file application state
+  const [applyingPatch, setApplyingPatch] = useState(false);
+  const [patchApplyResult, setPatchApplyResult] = useState(null);
+  const [patchApplyError, setPatchApplyError] = useState("");
+
   async function loadRepositories() {
     try {
       setRepositoriesLoading(true);
@@ -328,6 +333,44 @@ function App() {
   function clearResult() {
     setInvestigationResult(null);
     setInvestigationError("");
+    setPatchApplyResult(null);
+    setPatchApplyError("");
+  }
+
+  async function handleApplyPatch(targetRepoId, patchFile, patchedContent) {
+    if (!targetRepoId || !patchFile || !patchedContent) return;
+    setApplyingPatch(true);
+    setPatchApplyError("");
+    setPatchApplyResult(null);
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/patches/apply`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          repository_id: targetRepoId,
+          patch_file: patchFile,
+          patched_content: patchedContent,
+        }),
+      });
+
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(data.detail || `Failed to apply patch (HTTP ${response.status})`);
+      }
+
+      setPatchApplyResult({
+        patchedFile: data.patched_file || patchFile,
+        backupFile: data.backup_file || "",
+        message: data.message || `Successfully applied fix to ${data.patched_file || patchFile}!`,
+      });
+    } catch (err) {
+      setPatchApplyError(err instanceof Error ? err.message : "Failed to apply fix to repository.");
+    } finally {
+      setApplyingPatch(false);
+    }
   }
 
   async function handlePublicGitHubImport(event) {
@@ -903,12 +946,73 @@ function App() {
                         </div>
 
                         {investigationResult.verification.diff && (
-                          <details className="history-item" style={{ marginBottom: "10px" }} open>
-                            <summary>
-                              <strong>Verified Patch Diff ({investigationResult.verification.patched_file})</strong>
-                            </summary>
-                            <pre className="diff-view">{investigationResult.verification.diff}</pre>
-                          </details>
+                          <div className="diff-card-container">
+                            <details className="history-item" style={{ marginBottom: "10px" }} open>
+                              <summary>
+                                <strong>Verified Patch Diff ({investigationResult.verification.patched_file})</strong>
+                              </summary>
+                              <pre className="diff-view">{investigationResult.verification.diff}</pre>
+                            </details>
+
+                            {investigationResult.verification.patched_content && (
+                              <div className="patch-approval-card">
+                                <div className="patch-approval-header">
+                                  <div>
+                                    <div className="patch-badge-row">
+                                      <span className="patch-badge">Verified Minimal Fix</span>
+                                      <span className="patch-target-tag">{investigationResult.verification.patched_file}</span>
+                                    </div>
+                                    <p className="muted tiny" style={{ margin: "5px 0 0" }}>
+                                      Review the diff above. Tap below to approve and edit this file in your codebase directly from your phone.
+                                    </p>
+                                  </div>
+                                </div>
+
+                                {patchApplyResult && (
+                                  <div className="patch-applied-banner" role="status">
+                                    <span className="patch-applied-icon">✓</span>
+                                    <div>
+                                      <strong>Fix Applied to Codebase!</strong>
+                                      <p className="tiny" style={{ margin: "2px 0 0" }}>
+                                        {patchApplyResult.message}
+                                        {patchApplyResult.backupFile && ` (Safety backup created: ${patchApplyResult.backupFile})`}
+                                      </p>
+                                    </div>
+                                  </div>
+                                )}
+
+                                {patchApplyError && (
+                                  <div className="error-message" role="alert" style={{ margin: "8px 0" }}>
+                                    <strong>Could not apply patch:</strong> {patchApplyError}
+                                  </div>
+                                )}
+
+                                {!patchApplyResult && (
+                                  <button
+                                    type="button"
+                                    className="apply-patch-button"
+                                    disabled={applyingPatch}
+                                    onClick={() =>
+                                      handleApplyPatch(
+                                        investigationResult.repository_id || repoId,
+                                        investigationResult.verification.patched_file,
+                                        investigationResult.verification.patched_content
+                                      )
+                                    }
+                                  >
+                                    {applyingPatch ? (
+                                      <span>Applying fix to codebase...</span>
+                                    ) : (
+                                      <>
+                                        <span>✓ Approve & Apply Fix to Codebase</span>
+                                        <span className="button-arrow">↗</span>
+                                      </>
+                                    )}
+                                  </button>
+                                )}
+                              </div>
+                            )}
+                          </div>
                         )}
 
                         {investigationResult.verification.test_code && (
@@ -1287,7 +1391,27 @@ function App() {
                             </div>
                           </div>
                           {item.verification.diff && (
-                            <pre className="diff-view">{item.verification.diff}</pre>
+                            <div className="diff-card-container">
+                              <pre className="diff-view">{item.verification.diff}</pre>
+                              {item.verification.patched_content && (
+                                <div className="patch-approval-card mini">
+                                  <button
+                                    type="button"
+                                    className="apply-patch-button secondary"
+                                    disabled={applyingPatch}
+                                    onClick={() =>
+                                      handleApplyPatch(
+                                        item.repository_id,
+                                        item.verification.patched_file,
+                                        item.verification.patched_content
+                                      )
+                                    }
+                                  >
+                                    {applyingPatch ? "Applying fix..." : `✓ Approve & Apply Fix to ${item.verification.patched_file}`}
+                                  </button>
+                                </div>
+                              )}
+                            </div>
                           )}
                         </div>
                       )}

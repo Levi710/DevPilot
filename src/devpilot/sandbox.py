@@ -764,6 +764,7 @@ def validate_patch(
         "reproduction_resolved": reproduction_resolved,
         "regression_suite_passed": regression_passed,
         "patched_file": str(rel_patch_file.as_posix()),
+        "patched_content": patched_content,
         "diff": unified_diff,
         "pre_fix": pre_fix,
         "post_fix": post_fix_res.to_dict(),
