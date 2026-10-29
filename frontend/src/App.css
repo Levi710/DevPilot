@@ -906,135 +906,7 @@ textarea::placeholder {
   min-width: 0;
 }
 
-/* Switch to a compact, single-column layout on phones. */
-@media (max-width: 760px) {
-  .sidebar {
-    position: sticky;
-    top: 0;
-    width: 100%;
-    height: auto;
-    padding: 12px 15px;
-    flex-direction: row;
-    align-items: center;
-    justify-content: space-between;
-    border-right: 0;
-    border-bottom: 1px solid var(--border);
-  }
 
-  .brand {
-    margin: 0;
-    padding: 0;
-  }
-
-  .brand-icon {
-    width: 34px;
-    height: 34px;
-  }
-
-  .brand small,
-  .nav-label,
-  .sidebar-bottom,
-  .hero-symbol {
-    display: none;
-  }
-
-  .sidebar > .nav-item {
-    width: auto;
-    padding: 9px;
-    margin: 0;
-    font-size: 10px;
-    gap: 6px;
-  }
-
-  .nav-dot {
-    width: 5px;
-    height: 5px;
-  }
-
-  .main-content {
-    margin-left: 0;
-  }
-
-  .topbar {
-    height: 53px;
-    padding: 0 18px;
-  }
-
-  .page-container {
-    padding: 30px 16px 45px;
-  }
-
-  .welcome-row {
-    margin-bottom: 25px;
-  }
-
-  h1 {
-    font-size: 36px;
-  }
-
-  .subtitle {
-    font-size: 12px;
-  }
-
-  .panel {
-    padding: 19px 15px;
-  }
-
-  .panel-heading {
-    align-items: flex-start;
-  }
-
-  .form-footer {
-    align-items: stretch;
-    flex-direction: column;
-  }
-
-  .primary-button {
-    justify-content: center;
-    width: 100%;
-    padding: 14px;
-  }
-
-  .history-item,
-  .repository-card {
-    gap: 9px;
-    padding: 12px 10px;
-  }
-
-  .history-status {
-    font-size: 9px;
-  }
-
-  .history-title strong,
-  .repository-card strong {
-    font-size: 11px;
-  }
-
-  .history-arrow {
-    display: none;
-  }
-}
-
-@media (max-width: 390px) {
-  .brand strong {
-    font-size: 13px;
-  }
-
-  .sidebar {
-    gap: 3px;
-    padding: 10px 8px;
-  }
-
-  .sidebar > .nav-item {
-    padding: 8px 5px;
-    font-size: 9px;
-  }
-
-  .history-status {
-    max-width: 85px;
-    white-space: normal;
-  }
-}
 
 /* Make backend connection errors visible without disrupting the layout. */
 .error-message {
@@ -1636,22 +1508,61 @@ details.history-item pre.investigation-answer {
   transform: translateY(-7px) rotate(-45deg);
 }
 
-.sidebar-backdrop {
+.sidebar-header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  margin-bottom: 36px;
+}
+
+.sidebar-header-row .brand {
+  margin-bottom: 0;
+  padding: 0;
+}
+
+.drawer-close-button {
   display: none;
+  background: #181c28;
+  border: 1px solid var(--border);
+  color: #c9d1d9;
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: all 0.2s ease;
+}
+
+.drawer-close-button:hover {
+  background: #252b3e;
+  color: #fff;
+}
+
+.sidebar-backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.7);
+  background: rgba(0, 0, 0, 0.75);
   backdrop-filter: blur(5px);
   -webkit-backdrop-filter: blur(5px);
-  z-index: 40;
+  z-index: 55;
+  animation: fadeIn 0.2s ease;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 
 /* --------------------------------------------------
  * Comprehensive Responsive Media Queries
  * -------------------------------------------------- */
 @media (max-width: 820px) {
-  .sidebar-backdrop {
-    display: block;
+  .drawer-close-button {
+    display: inline-flex;
   }
 
   .mobile-nav-toggle {
@@ -1659,15 +1570,29 @@ details.history-item pre.investigation-answer {
   }
 
   .sidebar {
+    position: fixed !important;
+    top: 0 !important;
+    left: 0 !important;
+    bottom: 0 !important;
+    height: 100vh !important;
+    height: 100dvh !important;
+    width: 285px !important;
+    max-width: 85vw !important;
+    flex-direction: column !important;
+    padding: 24px 18px !important;
+    background: #0d0f17 !important;
+    border-right: 1px solid var(--border) !important;
+    border-bottom: none !important;
+    z-index: 60 !important;
     transform: translateX(-100%);
-    transition: transform 0.28s cubic-bezier(0.16, 1, 0.3, 1);
-    width: 275px;
-    z-index: 50;
-    box-shadow: 4px 0 35px rgba(0, 0, 0, 0.85);
+    transition: transform 0.26s cubic-bezier(0.16, 1, 0.3, 1);
+    box-shadow: 4px 0 35px rgba(0, 0, 0, 0.9);
+    display: flex !important;
+    overflow-y: auto;
   }
 
   .sidebar.mobile-open {
-    transform: translateX(0);
+    transform: translateX(0) !important;
   }
 
   .main-content {

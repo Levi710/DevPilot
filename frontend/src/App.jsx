@@ -565,21 +565,31 @@ function App() {
       )}
 
       <aside className={`sidebar ${mobileNavOpen ? "mobile-open" : ""}`}>
-        <a
-          className="brand"
-          href="#home"
-          onClick={(event) => {
-            event.preventDefault();
-            setPage("Overview");
-            setMobileNavOpen(false);
-          }}
-        >
-          <span className="brand-icon">D</span>
-          <span>
-            <strong>DevPilot</strong>
-            <small>AI debugging workspace</small>
-          </span>
-        </a>
+        <div className="sidebar-header-row">
+          <a
+            className="brand"
+            href="#home"
+            onClick={(event) => {
+              event.preventDefault();
+              setPage("Overview");
+              setMobileNavOpen(false);
+            }}
+          >
+            <span className="brand-icon">D</span>
+            <span>
+              <strong>DevPilot</strong>
+              <small>AI debugging workspace</small>
+            </span>
+          </a>
+          <button
+            type="button"
+            className="drawer-close-button"
+            onClick={() => setMobileNavOpen(false)}
+            aria-label="Close navigation menu"
+          >
+            ✕
+          </button>
+        </div>
 
         <p className="nav-label">WORKSPACE</p>
 
