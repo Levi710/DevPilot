@@ -237,6 +237,7 @@ def execute_tool(
     tool_call,
     repo_root: str,
     python_executable: str | None = None,
+    context: dict | None = None,
 ):
     """Validate and execute one approved tool inside the selected repository."""
 
@@ -254,11 +255,7 @@ def execute_tool(
         raise ValueError("Tool arguments must be a JSON object.")
 
     if tool_name == "search_code":
-        if set(arguments) != {"query"}:
-            raise ValueError("Invalid arguments for search_code.")
-
-        query = arguments["query"]
-
+        query = arguments.get("query")
         if not isinstance(query, str) or not query.strip():
             raise ValueError("query must be a non-empty string.")
 
@@ -266,11 +263,7 @@ def execute_tool(
         return search_code(query, repo_root=repo_root)
 
     if tool_name == "read_file":
-        if set(arguments) != {"path"}:
-            raise ValueError("Invalid arguments for read_file.")
-
-        path = arguments["path"]
-
+        path = arguments.get("path") or arguments.get("file")
         if not isinstance(path, str) or not path.strip():
             raise ValueError("path must be a non-empty string.")
 
@@ -278,12 +271,12 @@ def execute_tool(
         return read_file(path, repo_root=repo_root)
 
     if tool_name == "run_reproduction_test":
-        if "test_code" not in arguments:
-            raise ValueError("test_code is required for run_reproduction_test.")
-
-        test_code = arguments["test_code"]
+        test_code = arguments.get("test_code") or arguments.get("test") or arguments.get("test_script")
         if not isinstance(test_code, str) or not test_code.strip():
             raise ValueError("test_code must be a non-empty string.")
+
+        if context is not None:
+            context["last_reproduction_test_code"] = test_code
 
         expected_exc = arguments.get("expected_exception")
         if expected_exc is not None and not isinstance(expected_exc, str):
@@ -297,21 +290,28 @@ def execute_tool(
         )
 
     if tool_name == "validate_patch":
-        required = {"patch_file", "patched_content", "test_code"}
-        if not required.issubset(set(arguments)):
-            raise ValueError(f"validate_patch requires arguments: {sorted(required)}")
-
-        patch_file = arguments["patch_file"]
-        patched_content = arguments["patched_content"]
-        test_code = arguments["test_code"]
+        patch_file = arguments.get("patch_file") or arguments.get("file") or arguments.get("path")
+        patched_content = (
+            arguments.get("patched_content")
+            if "patched_content" in arguments
+            else arguments.get("content")
+            if "content" in arguments
+            else arguments.get("patch_content")
+        )
+        test_code = (
+            arguments.get("test_code")
+            or arguments.get("test")
+            or arguments.get("test_script")
+            or (context.get("last_reproduction_test_code") if context else None)
+        )
         expected_exc = arguments.get("expected_exception")
 
-        if not isinstance(patch_file, str) or not patch_file.strip():
-            raise ValueError("patch_file must be a non-empty string.")
-        if not isinstance(patched_content, str):
-            raise ValueError("patched_content must be a string.")
-        if not isinstance(test_code, str) or not test_code.strip():
-            raise ValueError("test_code must be a non-empty string.")
+        if not patch_file or not isinstance(patch_file, str) or not patch_file.strip():
+            raise ValueError("validate_patch requires 'patch_file'.")
+        if patched_content is None or not isinstance(patched_content, str):
+            raise ValueError("validate_patch requires 'patched_content'.")
+        if not test_code or not isinstance(test_code, str) or not test_code.strip():
+            raise ValueError("validate_patch requires 'test_code' (or a preceding run_reproduction_test).")
 
         return validate_patch(
             patch_file=patch_file,
@@ -462,7 +462,7 @@ def extract_error_from_image(image_data: str) -> str:
 def run_investigation(
     repository_id: str,
     task: str = "",
-    max_iterations: int = 5,
+    max_iterations: int = 8,
     image_data: str | None = None,
 ) -> dict:
     """Investigate a user-reported problem and return structured findings."""
@@ -591,6 +591,7 @@ def run_investigation(
     evidence = []
     executed_tool_calls = {}
     verification = None
+    tool_context = {}
 
     for step in range(max_iterations):
         # Reserve the final model iteration for synthesis. The model can use
@@ -718,6 +719,7 @@ def run_investigation(
                         tool_call,
                         repo_root=repo_root,
                         python_executable=python_executable,
+                        context=tool_context,
                     )
 
                     if tool_name == "validate_patch" and isinstance(result, dict):
