@@ -11,6 +11,16 @@ import remarkGfm from "remark-gfm";
 // An absolute URL is only for an intentionally configured deployment.
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "";
 
+const TASK_LIFECYCLE_STAGES = [
+  { key: "queued", label: "Queued" },
+  { key: "policy_checked", label: "Policy Checked" },
+  { key: "worker_provisioning", label: "Worker Ready" },
+  { key: "checkout_ready", label: "Checkout Staged" },
+  { key: "investigating", label: "Investigating" },
+  { key: "patch_validating", label: "Validating Patch" },
+  { key: "awaiting_approval", label: "Awaiting Approval" },
+];
+
 function App() {
   const [page, setPage] = useState("Overview");
 
@@ -31,6 +41,15 @@ function App() {
   const [githubRepositoryUrl, setGithubRepositoryUrl] = useState("");
   const [githubImporting, setGithubImporting] = useState(false);
   const [githubImportError, setGithubImportError] = useState("");
+
+  // Durable task inspection state
+  const [taskIdInput, setTaskIdInput] = useState("");
+  const [durableTask, setDurableTask] = useState(null);
+  const [taskAuditEvents, setTaskAuditEvents] = useState([]);
+  const [taskLoading, setTaskLoading] = useState(false);
+  const [taskProcessing, setTaskProcessing] = useState(false);
+  const [taskError, setTaskError] = useState("");
+  const [taskSuccessMessage, setTaskSuccessMessage] = useState("");
 
   // Screenshot selection is currently only a browser-side preview.
   const [image, setImage] = useState(null);
@@ -168,6 +187,75 @@ function App() {
     if (status === "incomplete") return "Incomplete";
     if (status === "failed") return "Failed";
     return formatStatus(status);
+  }
+
+  async function loadDurableTask(idToLoad) {
+    const id = (idToLoad || taskIdInput).trim();
+    if (!id) {
+      setTaskError("Please enter a valid task UUID.");
+      return;
+    }
+    setTaskLoading(true);
+    setTaskError("");
+    setTaskSuccessMessage("");
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/tasks/${encodeURIComponent(id)}`);
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(data.detail || `Failed to fetch durable task (HTTP ${response.status})`);
+      }
+      setDurableTask(data.task);
+      setTaskAuditEvents(data.audit_events || []);
+    } catch (err) {
+      setDurableTask(null);
+      setTaskAuditEvents([]);
+      setTaskError(err instanceof Error ? err.message : "Failed to load durable task.");
+    } finally {
+      setTaskLoading(false);
+    }
+  }
+
+  async function handleProcessDurableTask(idToProcess) {
+    const id = idToProcess || durableTask?.task_id;
+    if (!id) return;
+    setTaskProcessing(true);
+    setTaskError("");
+    setTaskSuccessMessage("");
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/tasks/${encodeURIComponent(id)}/process`, {
+        method: "POST",
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(data.detail || `Failed to process durable task (HTTP ${response.status})`);
+      }
+      setTaskSuccessMessage(`Task state advanced: now in '${data.task.state}'.`);
+      await loadDurableTask(id);
+    } catch (err) {
+      setTaskError(err instanceof Error ? err.message : "Failed to advance durable task.");
+    } finally {
+      setTaskProcessing(false);
+    }
+  }
+
+  function getStepStatus(stageKey, currentTaskState) {
+    if (currentTaskState === "failed") return "failed";
+    if (currentTaskState === "cancelled") return "cancelled";
+    const stageOrder = [
+      "queued",
+      "policy_checked",
+      "worker_provisioning",
+      "checkout_ready",
+      "investigating",
+      "patch_validating",
+      "awaiting_approval",
+    ];
+    const currentIndex = stageOrder.indexOf(currentTaskState);
+    const stageIndex = stageOrder.indexOf(stageKey);
+    if (stageIndex === -1 || currentIndex === -1) return "pending";
+    if (stageIndex < currentIndex) return "completed";
+    if (stageIndex === currentIndex) return "active";
+    return "pending";
   }
 
   // Render unambiguous empirical verification status badges.
@@ -431,7 +519,7 @@ function App() {
 
         <p className="nav-label">WORKSPACE</p>
 
-        {["Overview", "Investigations", "Repositories"].map((item) => (
+        {["Overview", "Investigations", "Repositories", "Durable Tasks"].map((item) => (
           <button
             key={item}
             className={`nav-item ${page === item ? "active" : ""}`}
@@ -1133,6 +1221,154 @@ function App() {
                   </details>
                 ))}
               </div>
+            </section>
+          )}
+
+          {page === "Durable Tasks" && (
+            <section className="section-block">
+              <p className="eyebrow">POSTGRESQL TASK LIFECYCLE</p>
+              <h1>Durable Tasks</h1>
+              <p className="subtitle">
+                Inspect durable tasks received via GitHub webhooks or API, view audit trails, and trigger state transitions.
+              </p>
+
+              <form
+                className="task-search-form"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  loadDurableTask();
+                }}
+              >
+                <input
+                  className="task-search-input"
+                  type="text"
+                  placeholder="Enter Task UUID (e.g. b16305f2-0ce0-42a7-919d-d019b196e724)"
+                  value={taskIdInput}
+                  onChange={(e) => {
+                    setTaskIdInput(e.target.value);
+                    setTaskError("");
+                    setTaskSuccessMessage("");
+                  }}
+                  disabled={taskLoading}
+                />
+                <button className="primary-button" type="submit" disabled={taskLoading || !taskIdInput.trim()}>
+                  {taskLoading ? "Inspecting..." : "Inspect Task 🔍"}
+                </button>
+              </form>
+
+              {taskError && (
+                <p className="error-message" role="alert">
+                  {taskError}
+                </p>
+              )}
+
+              {taskSuccessMessage && (
+                <div style={{ background: "rgba(46, 160, 67, 0.15)", color: "#3fb950", border: "1px solid rgba(63, 185, 80, 0.3)", padding: "0.75rem 1rem", borderRadius: "8px", marginBottom: "1.5rem" }}>
+                  ✓ {taskSuccessMessage}
+                </div>
+              )}
+
+              {durableTask && (
+                <div className="task-card-container">
+                  <div className="task-header-row">
+                    <div>
+                      <small style={{ color: "#8b949e", textTransform: "uppercase", letterSpacing: "0.05em", fontSize: "0.75rem" }}>
+                        TASK ID
+                      </small>
+                      <h2 style={{ margin: "0.25rem 0 0 0", fontFamily: "Consolas, monospace", fontSize: "1.2rem", color: "#f0f6fc" }}>
+                        {durableTask.task_id}
+                      </h2>
+                    </div>
+
+                    <div style={{ display: "flex", gap: "10px", alignItems: "center" }}>
+                      <span className={`status-badge ${durableTask.state}`}>
+                        {durableTask.state.replace("_", " ")}
+                      </span>
+                      {durableTask.state !== "awaiting_approval" && durableTask.state !== "failed" && durableTask.state !== "cancelled" && (
+                        <button
+                          className="primary-button"
+                          type="button"
+                          onClick={() => handleProcessDurableTask(durableTask.task_id)}
+                          disabled={taskProcessing}
+                          style={{ padding: "0.45rem 1rem", fontSize: "0.85rem" }}
+                        >
+                          {taskProcessing ? "Advancing..." : "Process Step ⚡"}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="task-details-grid">
+                    <div className="task-detail-item">
+                      <small>Source</small>
+                      <strong>{durableTask.source}</strong>
+                    </div>
+                    <div className="task-detail-item">
+                      <small>Repository Node ID</small>
+                      <strong>{durableTask.repository_node_id}</strong>
+                    </div>
+                    <div className="task-detail-item">
+                      <small>Base SHA</small>
+                      <strong>{durableTask.base_sha ? durableTask.base_sha.slice(0, 10) : "N/A"}</strong>
+                    </div>
+                    <div className="task-detail-item">
+                      <small>Created</small>
+                      <strong>{formatHistoryTime(durableTask.created_at)}</strong>
+                    </div>
+                  </div>
+
+                  <div>
+                    <h3 style={{ fontSize: "0.95rem", color: "#c9d1d9", marginBottom: "0.5rem" }}>
+                      Lifecycle Progression
+                    </h3>
+                    <div className="task-lifecycle-stepper">
+                      {TASK_LIFECYCLE_STAGES.map((stage, idx) => {
+                        const status = getStepStatus(stage.key, durableTask.state);
+                        return (
+                          <div key={stage.key} style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                            <div className={`step-pill ${status}`}>
+                              <span>
+                                {status === "completed" ? "✓" : status === "active" ? "●" : status === "failed" ? "✕" : "○"}
+                              </span>
+                              <span>{stage.label}</span>
+                            </div>
+                            {idx < TASK_LIFECYCLE_STAGES.length - 1 && <span className="step-arrow">→</span>}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  <div className="audit-events-section">
+                    <h3 style={{ fontSize: "0.95rem", color: "#c9d1d9", marginBottom: "0.5rem" }}>
+                      Audit Event Trail ({taskAuditEvents.length})
+                    </h3>
+                    {taskAuditEvents.length === 0 ? (
+                      <p className="muted">No audit events recorded yet.</p>
+                    ) : (
+                      <div className="audit-timeline">
+                        {taskAuditEvents.map((evt) => (
+                          <div className="audit-event-item" key={evt.event_id}>
+                            <span className="audit-event-name">{evt.event_type}</span>
+                            <span className="audit-event-time">{formatHistoryTime(evt.created_at)}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {!durableTask && !taskLoading && (
+                <div style={{ background: "rgba(22, 27, 34, 0.5)", border: "1px dashed rgba(140, 150, 170, 0.25)", borderRadius: "10px", padding: "2rem", textAlign: "center", color: "#8b949e", marginTop: "1rem" }}>
+                  <p style={{ margin: "0 0 0.5rem 0", fontSize: "1rem", color: "#c9d1d9" }}>
+                    No task loaded
+                  </p>
+                  <p style={{ margin: 0, fontSize: "0.85rem" }}>
+                    Paste a Task UUID above to inspect its durable state and audit log, or trigger inbound events via <code>POST /api/github/webhooks</code>.
+                  </p>
+                </div>
+              )}
             </section>
           )}
         </div>

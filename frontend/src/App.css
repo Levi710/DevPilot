@@ -1166,3 +1166,215 @@ details.history-item pre.investigation-answer {
 .investigation-answer table::-webkit-scrollbar-thumb:hover {
   background: #626a7d;
 }
+
+/* =====================================================================
+   Durable Task Orchestration & Lifecycle Styles
+   ===================================================================== */
+.task-search-form {
+  display: flex;
+  gap: 0.75rem;
+  align-items: center;
+  margin-bottom: 1.5rem;
+  max-width: 720px;
+  flex-wrap: wrap;
+}
+
+.task-search-input {
+  flex: 1;
+  min-width: 280px;
+  padding: 0.65rem 0.9rem;
+  background: #0d1117;
+  border: 1px solid rgba(140, 150, 170, 0.25);
+  border-radius: 8px;
+  color: #e6edf3;
+  font-family: Consolas, monospace;
+  font-size: 0.9rem;
+}
+
+.task-search-input:focus {
+  outline: none;
+  border-color: #58a6ff;
+  box-shadow: 0 0 0 2px rgba(88, 166, 255, 0.2);
+}
+
+.task-card-container {
+  background: #11151f;
+  border: 1px solid rgba(140, 150, 170, 0.2);
+  border-radius: 12px;
+  padding: 1.5rem;
+  margin-bottom: 2rem;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.35);
+}
+
+.task-header-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 1rem;
+  padding-bottom: 1.25rem;
+  border-bottom: 1px solid rgba(140, 150, 170, 0.15);
+  margin-bottom: 1.25rem;
+}
+
+.task-details-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+}
+
+.task-detail-item {
+  background: rgba(22, 27, 34, 0.7);
+  padding: 0.75rem 1rem;
+  border-radius: 8px;
+  border: 1px solid rgba(140, 150, 170, 0.12);
+}
+
+.task-detail-item small {
+  display: block;
+  color: #8b949e;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 0.25rem;
+}
+
+.task-detail-item strong {
+  color: #f0f6fc;
+  font-size: 0.9rem;
+  font-family: Consolas, monospace;
+  word-break: break-all;
+}
+
+.task-lifecycle-stepper {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin: 1.5rem 0;
+  padding: 1rem;
+  background: rgba(13, 17, 23, 0.85);
+  border-radius: 10px;
+  border: 1px solid rgba(140, 150, 170, 0.15);
+}
+
+.step-pill {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.35rem 0.75rem;
+  border-radius: 20px;
+  font-size: 0.8rem;
+  font-weight: 500;
+  background: #161b22;
+  color: #8b949e;
+  border: 1px solid rgba(140, 150, 170, 0.15);
+  transition: all 0.2s ease;
+}
+
+.step-pill.completed {
+  background: rgba(46, 160, 67, 0.15);
+  color: #3fb950;
+  border-color: rgba(63, 185, 80, 0.4);
+}
+
+.step-pill.active {
+  background: rgba(88, 166, 255, 0.2);
+  color: #58a6ff;
+  border-color: #58a6ff;
+  box-shadow: 0 0 10px rgba(88, 166, 255, 0.3);
+}
+
+.step-pill.failed {
+  background: rgba(248, 81, 73, 0.2);
+  color: #f85149;
+  border-color: #f85149;
+}
+
+.step-arrow {
+  color: #484f58;
+  font-size: 0.75rem;
+  user-select: none;
+}
+
+.audit-events-section {
+  margin-top: 1.5rem;
+}
+
+.audit-timeline {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  margin-top: 0.75rem;
+}
+
+.audit-event-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.6rem 0.9rem;
+  background: rgba(22, 27, 34, 0.6);
+  border: 1px solid rgba(140, 150, 170, 0.12);
+  border-radius: 6px;
+  font-size: 0.83rem;
+}
+
+.audit-event-name {
+  font-weight: 600;
+  color: #c9d1d9;
+  font-family: Consolas, monospace;
+}
+
+.audit-event-time {
+  color: #8b949e;
+  font-size: 0.75rem;
+}
+
+.status-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.3rem 0.75rem;
+  border-radius: 20px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-transform: capitalize;
+}
+
+.status-badge.queued {
+  background: rgba(140, 150, 170, 0.2);
+  color: #c9d1d9;
+}
+
+.status-badge.policy_checked {
+  background: rgba(56, 139, 253, 0.2);
+  color: #58a6ff;
+}
+
+.status-badge.worker_provisioning,
+.status-badge.checkout_ready {
+  background: rgba(210, 153, 34, 0.2);
+  color: #e3b341;
+}
+
+.status-badge.investigating,
+.status-badge.patch_validating {
+  background: rgba(163, 113, 247, 0.2);
+  color: #bc8cff;
+}
+
+.status-badge.awaiting_approval {
+  background: rgba(46, 160, 67, 0.2);
+  color: #3fb950;
+}
+
+.status-badge.failed {
+  background: rgba(248, 81, 73, 0.2);
+  color: #f85149;
+}
+
+.status-badge.cancelled {
+  background: rgba(110, 118, 129, 0.2);
+  color: #8b949e;
+}
+
