@@ -397,10 +397,73 @@ def _call_model_with_retry(request_kwargs: dict, evidence: list, step: int):
             raise err from exc
 
 
+def extract_error_from_image(image_data: str) -> str:
+    """Analyze an uploaded screenshot or photo of an error using the vision model."""
+    _require_model_configuration()
+
+    if not isinstance(image_data, str) or not image_data.strip():
+        raise ValueError("Image data cannot be empty.")
+
+    clean_data = image_data.strip()
+    if clean_data.startswith("data:image/"):
+        image_url = clean_data
+    else:
+        image_url = f"data:image/png;base64,{clean_data}"
+
+    prompt = (
+        "You are DevPilot Vision, a software engineering diagnostics specialist. "
+        "Analyze this screenshot or photo from a development environment, terminal, or application.\n\n"
+        "Please extract and clearly report all visible technical details:\n"
+        "1. EXCEPTION / ERROR MESSAGE: Exact error strings, HTTP status codes, or failure summaries.\n"
+        "2. STACK TRACE & LOCATION: File paths, module names, class/function names, and 1-based line numbers visible.\n"
+        "3. CODE / TERMINAL CONTEXT: Any snippets of code, commands run, or terminal logs shown where the user is stuck.\n"
+        "4. PROBLEM SUMMARY: A concise diagnosis of what went wrong and what needs investigation.\n\n"
+        "Provide a structured, accurate transcription to help locate the issue in the codebase."
+    )
+
+    try:
+        response = client.chat.completions.create(
+            model=MODEL,
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": prompt},
+                        {"type": "image_url", "image_url": {"url": image_url}},
+                    ],
+                }
+            ],
+            max_tokens=1024,
+        )
+    except APIStatusError as exc:
+        _log_provider_error(exc)
+        raise RuntimeError(f"Vision model provider error: {exc}") from exc
+    except (APIConnectionError, APITimeoutError) as exc:
+        raise RuntimeError(f"Vision model connection failed: {exc}") from exc
+
+    choices = getattr(response, "choices", None)
+    if not choices:
+        raise RuntimeError("The vision model returned no choices.")
+
+    message = getattr(choices[0], "message", None)
+    if message is None:
+        raise RuntimeError("The vision model returned no message.")
+
+    content = getattr(message, "content", None) or ""
+    if not content.strip() and hasattr(message, "reasoning_content"):
+        content = getattr(message, "reasoning_content", "") or ""
+
+    if not content.strip():
+        raise RuntimeError("The vision model could not read or analyze the image.")
+
+    return content.strip()
+
+
 def run_investigation(
     repository_id: str,
-    task: str,
+    task: str = "",
     max_iterations: int = 5,
+    image_data: str | None = None,
 ) -> dict:
     """Investigate a user-reported problem and return structured findings."""
 
@@ -408,7 +471,29 @@ def run_investigation(
     if not isinstance(repository_id, str) or not repository_id.strip():
         raise ValueError("repository_id must be a non-empty string.")
 
-    if not isinstance(task, str) or not task.strip():
+    screenshot_analysis = None
+    if image_data:
+        try:
+            screenshot_analysis = extract_error_from_image(image_data)
+        except Exception as exc:
+            logger.warning("Failed to extract error from screenshot: %s", exc)
+            screenshot_analysis = f"[Screenshot analysis warning: {exc}]"
+
+    task_str = str(task).strip() if task is not None else ""
+    if screenshot_analysis:
+        if task_str:
+            effective_task = (
+                f"{task_str}\n\n"
+                f"### Uploaded Error Screenshot Details:\n{screenshot_analysis}"
+            )
+        else:
+            effective_task = (
+                f"The user uploaded a screenshot of an error / bug:\n\n{screenshot_analysis}"
+            )
+    else:
+        effective_task = task_str
+
+    if not effective_task:
         raise ValueError("The investigation description cannot be empty.")
 
     if not isinstance(max_iterations, int) or not 1 <= max_iterations <= 10:
@@ -490,7 +575,7 @@ def run_investigation(
         },
         {
             "role": "user",
-            "content": task.strip(),
+            "content": effective_task,
         },
     ]
 
@@ -579,7 +664,7 @@ def run_investigation(
             is_incomplete = any(ind in lower_ans for ind in insufficient_indicators) and len(evidence) <= 2
             status = "incomplete" if is_incomplete else "completed"
 
-            return {
+            completed_result = {
                 "status": status,
                 "repository_id": repository_id,
                 "repository_name": repository.get("name", repository_id),
@@ -588,6 +673,9 @@ def run_investigation(
                 "verification": verification,
                 "iterations": step + 1,
             }
+            if screenshot_analysis:
+                completed_result["screenshot_analysis"] = screenshot_analysis
+            return completed_result
 
         for tool_call in message.tool_calls:
             tool_id = getattr(tool_call, "id", None)
@@ -667,7 +755,7 @@ def run_investigation(
     # The final iteration is reserved for a tool-free synthesis response; if
     # the provider still returns tool calls, report the investigation honestly
     # as incomplete and expose the evidence collected so far.
-    return {
+    incomplete_result = {
         "status": "incomplete",
         "repository_id": repository_id,
         "repository_name": repository.get("name", repository_id),
@@ -680,6 +768,9 @@ def run_investigation(
         "verification": verification,
         "iterations": max_iterations,
     }
+    if screenshot_analysis:
+        incomplete_result["screenshot_analysis"] = screenshot_analysis
+    return incomplete_result
 
 
 def test_tool_call(repository_id: str = "devpilot"):

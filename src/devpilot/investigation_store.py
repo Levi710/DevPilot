@@ -51,6 +51,12 @@ def initialize_store() -> None:
             except Exception:
                 pass
 
+        if "screenshot_analysis" not in existing_cols:
+            try:
+                connection.execute("ALTER TABLE investigations ADD COLUMN screenshot_analysis TEXT")
+            except Exception:
+                pass
+
         connection.execute(
             "CREATE INDEX IF NOT EXISTS idx_investigations_created_at "
             "ON investigations(created_at DESC)"
@@ -77,14 +83,15 @@ def save_investigation(
     verification_json = (
         json.dumps(verification, ensure_ascii=False) if verification else None
     )
+    screenshot_analysis = result.get("screenshot_analysis")
 
     with _connect() as connection:
         cursor = connection.execute(
             """
             INSERT INTO investigations (
                 repository_id, repository_name, description, status,
-                answer, evidence_json, verification_json, iterations, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                answer, evidence_json, verification_json, screenshot_analysis, iterations, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 repository_id,
@@ -94,6 +101,7 @@ def save_investigation(
                 str(result.get("answer", "")),
                 json.dumps(evidence, ensure_ascii=False),
                 verification_json,
+                screenshot_analysis,
                 result.get("iterations"),
                 created_at,
             ),
@@ -111,6 +119,12 @@ def _row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
         except (json.JSONDecodeError, TypeError):
             verification = None
 
+    screenshot_analysis = (
+        row["screenshot_analysis"]
+        if "screenshot_analysis" in row.keys() and row["screenshot_analysis"]
+        else None
+    )
+
     return {
         "id": row["id"],
         "repository_id": row["repository_id"],
@@ -120,6 +134,7 @@ def _row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
         "answer": row["answer"],
         "evidence": json.loads(row["evidence_json"]),
         "verification": verification,
+        "screenshot_analysis": screenshot_analysis,
         "iterations": row["iterations"],
         "created_at": row["created_at"],
     }

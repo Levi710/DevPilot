@@ -20,7 +20,8 @@ Unlike a general-purpose chatbot, DevPilot grounds its findings in repository fi
 - **Read-only GitHub App ingress:** Authenticates GitHub Apps via short-lived JWTs, verifies HMAC SHA-256 webhook signatures, deduplicates deliveries, and preserves repo read-only safety.
 - **Fail-closed policy engine:** Separates untrusted issue/PR text from authorization; explicitly blocks writes, commits, merges, and deployments.
 - **Docker containerization:** Provides a pinned PostgreSQL service and a dedicated worker image (`Dockerfile.worker`, `compose.yaml`) for containerized Linux validation.
-- **React interface & LAN support:** Features a Vite/React dashboard with token-protected LAN proxying for mobile review on trusted networks.
+- **Multimodal error screenshot & photo upload:** Accepts screenshots, photos from phone cameras, and clipboard images (`Ctrl+V`); transcribes stack traces, line numbers, and error codes using Vision-Language LLM diagnostics.
+- **Mobile-responsive UI & LAN access:** Fully responsive dashboard with mobile drawer navigation, quick camera snapping, and token-authenticated LAN proxying for investigating bugs from phones or tablets.
 - **Real-world library validation:** Evaluated against complex real-world open-source repositories (`psf/requests` and `encode/httpx`).
 
 ## Architecture
@@ -322,10 +323,10 @@ Run the automated test suite from the project root:
 The latest recorded test result across the full production foundation, security, evaluation, and sandbox suites:
 
 ```text
-153 passed, 3 skipped in 10.25s
+157 passed, 3 skipped in 10.00s
 ```
 
-All 156 test items evaluate repository registry bounds, token authentication, GitHub App RS256 JWT minting, webhook signature enforcement, isolated checkouts, task state transitions, TaskOrchestrator lifecycle transitions, Job Object quotas, and PEP 578 runtime audit traps.
+All 160 test items evaluate repository registry bounds, multimodal image error extraction, token authentication, GitHub App RS256 JWT minting, webhook signature enforcement, isolated checkouts, task state transitions, TaskOrchestrator lifecycle transitions, Job Object quotas, and PEP 578 runtime audit traps.
 
 ## Evaluation
 

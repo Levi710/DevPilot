@@ -51,9 +51,11 @@ function App() {
   const [taskError, setTaskError] = useState("");
   const [taskSuccessMessage, setTaskSuccessMessage] = useState("");
 
-  // Screenshot selection is currently only a browser-side preview.
+  // Screenshot and error image state (multimodal AI analysis)
   const [image, setImage] = useState(null);
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const fileInput = useRef(null);
+  const cameraInput = useRef(null);
 
   // Track the actual investigation request and its response.
   const [investigating, setInvestigating] = useState(false);
@@ -384,29 +386,50 @@ function App() {
     }
   }
 
-  function handleImageChange(event) {
-    const file = event.target.files?.[0];
-
+  function processImageFile(file) {
     if (!file) return;
 
     if (!file.type.startsWith("image/")) {
-      alert("Please choose an image file.");
-      event.target.value = "";
+      alert("Please choose a valid image file (PNG, JPG, WebP, etc.).");
       return;
     }
 
-    if (file.size > 10 * 1024 * 1024) {
-      alert("Choose an image smaller than 10 MB.");
-      event.target.value = "";
+    if (file.size > 12 * 1024 * 1024) {
+      alert("Please choose an image smaller than 12 MB.");
       return;
     }
 
-    setImage({
-      file,
-      previewUrl: URL.createObjectURL(file),
-    });
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      setImage({
+        file,
+        previewUrl: URL.createObjectURL(file),
+        base64: e.target?.result,
+      });
+      clearResult();
+    };
+    reader.readAsDataURL(file);
+  }
 
-    clearResult();
+  function handleImageChange(event) {
+    const file = event.target.files?.[0];
+    if (file) {
+      processImageFile(file);
+    }
+  }
+
+  function handlePaste(event) {
+    const items = event.clipboardData?.items;
+    if (!items) return;
+    for (let i = 0; i < items.length; i++) {
+      if (items[i].type.startsWith("image/")) {
+        const file = items[i].getAsFile();
+        if (file) {
+          processImageFile(file);
+          break;
+        }
+      }
+    }
   }
 
   function handleRemoveImage() {
@@ -415,11 +438,14 @@ function App() {
     if (fileInput.current) {
       fileInput.current.value = "";
     }
+    if (cameraInput.current) {
+      cameraInput.current.value = "";
+    }
 
     clearResult();
   }
 
-  // Send the bug report to FastAPI and wait for the real agent response.
+  // Send the bug report and optional screenshot to FastAPI for multimodal agent analysis.
   async function handleSubmit(event) {
     event.preventDefault();
     clearResult();
@@ -441,11 +467,9 @@ function App() {
       return;
     }
 
-    if (!description.trim()) {
+    if (!description.trim() && !image) {
       setInvestigationError(
-        image
-          ? "Screenshot analysis is not connected yet. Please describe the bug in text."
-          : "Describe the bug before starting an investigation."
+        "Describe the bug or attach an error screenshot before starting an investigation."
       );
       return;
     }
@@ -453,7 +477,6 @@ function App() {
     setInvestigating(true);
 
     try {
-      // The current backend accepts text only. The screenshot is not uploaded.
       const response = await fetch(
         `${API_BASE_URL}/api/investigations`,
         {
@@ -464,6 +487,7 @@ function App() {
           body: JSON.stringify({
             repository_id: repoId,
             description: description.trim(),
+            image_data: image ? image.base64 : null,
           }),
         }
       );
@@ -501,13 +525,22 @@ function App() {
 
   return (
     <div className="app-shell">
-      <aside className="sidebar">
+      {mobileNavOpen && (
+        <div
+          className="sidebar-backdrop"
+          onClick={() => setMobileNavOpen(false)}
+          aria-hidden="true"
+        />
+      )}
+
+      <aside className={`sidebar ${mobileNavOpen ? "mobile-open" : ""}`}>
         <a
           className="brand"
           href="#home"
           onClick={(event) => {
             event.preventDefault();
             setPage("Overview");
+            setMobileNavOpen(false);
           }}
         >
           <span className="brand-icon">D</span>
@@ -523,7 +556,10 @@ function App() {
           <button
             key={item}
             className={`nav-item ${page === item ? "active" : ""}`}
-            onClick={() => setPage(item)}
+            onClick={() => {
+              setPage(item);
+              setMobileNavOpen(false);
+            }}
           >
             <span className="nav-dot" />
             {item}
@@ -550,8 +586,20 @@ function App() {
 
       <main className="main-content">
         <header className="topbar">
-          <div className="breadcrumbs">
-            Workspace <span>/</span> {page}
+          <div className="topbar-left">
+            <button
+              type="button"
+              className={`mobile-nav-toggle ${mobileNavOpen ? "open" : ""}`}
+              aria-label="Toggle navigation menu"
+              onClick={() => setMobileNavOpen((open) => !open)}
+            >
+              <span className="hamburger-line" />
+              <span className="hamburger-line" />
+              <span className="hamburger-line" />
+            </button>
+            <div className="breadcrumbs">
+              Workspace <span>/</span> {page}
+            </div>
           </div>
           <div className="user-avatar" title="Your workspace">A</div>
         </header>
@@ -640,14 +688,15 @@ function App() {
                   )}
 
                   <label className="field-label" htmlFor="bug-description">
-                    Describe the problem
+                    Describe the problem or paste / attach error screenshot
                   </label>
 
                   <textarea
                     id="bug-description"
                     rows="4"
-                    placeholder="What happened? What did you expect instead? Paste an error message if you have one..."
+                    placeholder="Describe the bug, paste a screenshot (Ctrl+V), or snap a photo of the error..."
                     value={description}
+                    onPaste={handlePaste}
                     onChange={(event) => {
                       setDescription(event.target.value);
                       clearResult();
@@ -657,6 +706,13 @@ function App() {
                   <div className="upload-area">
                     <input
                       ref={fileInput}
+                      type="file"
+                      accept="image/*"
+                      hidden
+                      onChange={handleImageChange}
+                    />
+                    <input
+                      ref={cameraInput}
                       type="file"
                       accept="image/*"
                       capture="environment"
@@ -672,10 +728,9 @@ function App() {
                         />
 
                         <div className="image-info">
-                          <strong>{image.file.name}</strong>
+                          <strong>{image.file.name || "Attached Screenshot"}</strong>
                           <small>
-                            {(image.file.size / 1024).toFixed(0)} KB ·
-                            Local preview only
+                            {(image.file.size / 1024).toFixed(0)} KB · Ready for Multimodal Analysis
                           </small>
 
                           <button
@@ -688,26 +743,41 @@ function App() {
                         </div>
                       </div>
                     ) : (
-                      <button
-                        type="button"
-                        className="upload-trigger"
-                        onClick={() => fileInput.current?.click()}
-                      >
-                        <span className="upload-icon">↑</span>
-                        <span>
-                          <strong>Attach a screenshot</strong>
-                          <small>
-                            Browse files or use your phone camera · Max 10 MB
-                          </small>
-                        </span>
-                        <span className="upload-plus">+</span>
-                      </button>
+                      <div className="upload-triggers-container">
+                        <button
+                          type="button"
+                          className="upload-trigger"
+                          onClick={() => fileInput.current?.click()}
+                        >
+                          <span className="upload-icon">📁</span>
+                          <span>
+                            <strong>Upload screenshot</strong>
+                            <small>
+                              Pick from files or gallery · or paste (Ctrl+V)
+                            </small>
+                          </span>
+                          <span className="upload-plus">+</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          className="upload-trigger camera-trigger"
+                          onClick={() => cameraInput.current?.click()}
+                        >
+                          <span className="upload-icon">📷</span>
+                          <span>
+                            <strong>Snap Photo</strong>
+                            <small>Use phone camera</small>
+                          </span>
+                          <span className="upload-plus">+</span>
+                        </button>
+                      </div>
                     )}
                   </div>
 
                   <div className="form-footer">
                     <span className="muted tiny">
-                      The agent currently analyzes text reports only.
+                      ✨ Multimodal AI: Screenshots will be transcribed and analyzed alongside repository code.
                     </span>
 
                     <button
@@ -843,6 +913,25 @@ function App() {
                             <pre className="diff-view">{investigationResult.verification.test_code}</pre>
                           </details>
                         )}
+                      </section>
+                    )}
+
+                    {investigationResult.screenshot_analysis && (
+                      <section className="screenshot-card">
+                        <div className="screenshot-header">
+                          <span className="screenshot-badge-icon">📸</span>
+                          <div>
+                            <strong>Screenshot Diagnostics & Extracted Error</strong>
+                            <p className="muted tiny" style={{ margin: "2px 0 0" }}>
+                              Multimodal extraction of error traces, code context, and diagnostics from your image
+                            </p>
+                          </div>
+                        </div>
+                        <div className="screenshot-content markdown-body">
+                          <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                            {investigationResult.screenshot_analysis}
+                          </ReactMarkdown>
+                        </div>
                       </section>
                     )}
 

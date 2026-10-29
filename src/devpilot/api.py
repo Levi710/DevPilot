@@ -113,8 +113,13 @@ class InvestigationRequest(BaseModel):
     )
 
     description: str = Field(
-        min_length=1,
-        max_length=10000,
+        default="",
+        max_length=20000,
+    )
+
+    image_data: str | None = Field(
+        default=None,
+        max_length=15000000,
     )
 
     max_iterations: int = Field(
@@ -317,12 +322,13 @@ def create_investigation(request: InvestigationRequest):
     """Run an investigation and persist the resulting report."""
 
     # Remove leading and trailing whitespace from the description.
-    description = request.description.strip()
+    description = (request.description or "").strip()
+    image_data = request.image_data
 
-    if not description:
+    if not description and not image_data:
         raise HTTPException(
             status_code=400,
-            detail="Describe the bug before starting an investigation.",
+            detail="Describe the bug or attach an error screenshot before starting an investigation.",
         )
 
     # Resolve the repository using the trusted local registry.
@@ -347,11 +353,12 @@ def create_investigation(request: InvestigationRequest):
                 ),
             )
 
-        # Run the existing AI investigation agent.
+        # Run the AI investigation agent with optional multimodal image data.
         result = run_investigation(
             repository_id=request.repository_id,
             task=description,
             max_iterations=request.max_iterations,
+            image_data=image_data,
         )
 
     except HTTPException:
@@ -365,6 +372,7 @@ def create_investigation(request: InvestigationRequest):
 
     except RuntimeError as exc:
         # Save the failed investigation so history and database reflect the failure.
+        effective_desc = description or "Screenshot error investigation"
         try:
             save_investigation(
                 repository_id=request.repository_id,
@@ -372,7 +380,7 @@ def create_investigation(request: InvestigationRequest):
                     "name",
                     request.repository_id,
                 ) if repository else request.repository_id,
-                description=description,
+                description=effective_desc,
                 result={
                     "status": "failed",
                     "answer": f"Investigation failed: {exc}",
@@ -390,13 +398,14 @@ def create_investigation(request: InvestigationRequest):
 
     # Save the report using trusted repository metadata.
     try:
+        effective_desc = description or "Screenshot error investigation"
         saved = save_investigation(
             repository_id=request.repository_id,
             repository_name=repository.get(
                 "name",
                 request.repository_id,
             ),
-            description=description,
+            description=effective_desc,
             result=result,
         )
 
