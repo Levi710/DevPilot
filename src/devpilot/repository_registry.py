@@ -5,8 +5,12 @@ import re
 import shutil
 import subprocess
 import tempfile
+import threading
+import time
 from pathlib import Path
 from urllib.parse import urlparse
+
+_REGISTRY_LOCK = threading.RLock()
 
 
 # Store the registry separately from the source-code tools.
@@ -82,38 +86,51 @@ def _normalise_public_github_url(remote_url: str) -> str:
 
 
 def load_repositories() -> dict:
-    """Load registered repositories from the JSON registry."""
+    """Load registered repositories from the JSON registry safely with retry support."""
+    with _REGISTRY_LOCK:
+        if not REGISTRY_PATH.exists():
+            return {}
 
-    # A missing registry means no repositories have been connected yet.
-    if not REGISTRY_PATH.exists():
+        last_exc = None
+        for _ in range(5):
+            try:
+                with REGISTRY_PATH.open("r", encoding="utf-8") as file:
+                    content = file.read()
+                    if not content.strip():
+                        time.sleep(0.04)
+                        continue
+                    repositories = json.loads(content)
+                    if isinstance(repositories, dict):
+                        return repositories
+                    raise ValueError("Repository registry must contain a JSON object.")
+            except (json.JSONDecodeError, OSError) as exc:
+                last_exc = exc
+                time.sleep(0.04)
+
+        if last_exc:
+            raise RuntimeError(
+                f"Could not load repository registry: {last_exc}"
+            ) from last_exc
+
         return {}
-
-    # Read the saved JSON data and convert it into a Python dictionary.
-    try:
-        with REGISTRY_PATH.open("r", encoding="utf-8") as file:
-            repositories = json.load(file)
-    except (json.JSONDecodeError, OSError) as exc:
-        # Don't silently treat a corrupted registry as an empty one.
-        raise RuntimeError(
-            f"Could not load repository registry: {exc}"
-        ) from exc
-
-    # Reject unexpected data shapes before other functions use the registry.
-    if not isinstance(repositories, dict):
-        raise ValueError("Repository registry must contain a JSON object.")
-
-    return repositories
 
 
 def save_repositories(repositories: dict) -> None:
-    """Save the current repository registry to disk."""
-
-    # Ensure the registry's parent directory exists before writing.
-    REGISTRY_PATH.parent.mkdir(parents=True, exist_ok=True)
-
-    # Write readable JSON so the user can inspect the registry manually.
-    with REGISTRY_PATH.open("w", encoding="utf-8") as file:
-        json.dump(repositories, file, indent=4)
+    """Save the current repository registry to disk atomically and safely."""
+    with _REGISTRY_LOCK:
+        REGISTRY_PATH.parent.mkdir(parents=True, exist_ok=True)
+        temp_path = REGISTRY_PATH.with_suffix(".tmp")
+        try:
+            with temp_path.open("w", encoding="utf-8") as file:
+                json.dump(repositories, file, indent=4)
+            temp_path.replace(REGISTRY_PATH)
+        except Exception:
+            if temp_path.exists():
+                try:
+                    temp_path.unlink()
+                except OSError:
+                    pass
+            raise
 
 
 def register_local_repository(
@@ -269,11 +286,13 @@ def get_repository(repository_id: str) -> dict | None:
     # time investigation begins, including managed public GitHub clones.
     if repository.get("source_type") in {"local", "github_public_clone"}:
         repository_path = Path(repository["location"])
+        changed = False
 
         # A moved or deleted project is no longer available for investigation.
         if not repository_path.is_dir():
-            repository["status"] = "unavailable"
-            save_repositories(repositories)
+            if repository.get("status") != "unavailable":
+                repository["status"] = "unavailable"
+                save_repositories(repositories)
             return repository
 
         runtime_path = repository.get("python_executable")
@@ -281,14 +300,18 @@ def get_repository(repository_id: str) -> dict | None:
             runtime_path = _discover_repository_python_runtime(repository_path)
             if runtime_path:
                 repository["python_executable"] = runtime_path
+                changed = True
         if runtime_path and not Path(runtime_path).is_file():
-            repository["status"] = "runtime_unavailable"
-            save_repositories(repositories)
-            return repository
+            if repository.get("status") != "runtime_unavailable":
+                repository["status"] = "runtime_unavailable"
+                changed = True
+        else:
+            if repository.get("status") != "connected":
+                repository["status"] = "connected"
+                changed = True
 
-        # Refresh the status when a previously unavailable folder returns.
-        repository["status"] = "connected"
-        save_repositories(repositories)
+        if changed:
+            save_repositories(repositories)
 
     return repository
 
