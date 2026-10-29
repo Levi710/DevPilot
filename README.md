@@ -120,6 +120,7 @@ DevPilot/
 │       ├── task_policy.py            # Fail-closed repository capability policy
 │       ├── task_store.py             # PostgreSQL durable task state & audit log
 │       ├── tools.py                  # Approved inspection and verification tools
+│       ├── verify_github_app.py      # Live GitHub App read-only verification CLI
 │       └── webhook_service.py        # Webhook payload parsing & queue ingress
 ├── test_fixtures/                    # Minimal reproduction fixture repositories
 ├── tests/                            # Comprehensive automated pytest suite (156 tests)

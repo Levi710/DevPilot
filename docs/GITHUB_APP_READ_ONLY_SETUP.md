@@ -60,7 +60,16 @@ uses it only to list the installation's repositories, and refuses to continue
 unless exactly one repository is visible. It does not save the token, clone the
 repository, or make any GitHub write.
 
+## Run live verification
+
+To verify your configured App credentials, live RS256 JWT generation, and single repository access boundary:
+
+```powershell
+.\.venv\Scripts\python.exe src/devpilot/verify_github_app.py
+```
+
 GitHub recommends minimum permissions and installation tokens for automations;
 those tokens are repository-scoped and expire after one hour. [GitHub App best
 practices](https://docs.github.com/en/apps/creating-github-apps/about-creating-github-apps/best-practices-for-creating-a-github-app)
 [GitHub installation access tokens](https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/generating-an-installation-access-token-for-a-github-app)
+
