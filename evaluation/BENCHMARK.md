@@ -10,7 +10,7 @@ DevPilot does not merely generate speculative explanations; it executes a contro
 
 The benchmark evaluates two distinct dimensions:
 1. **Analysis & Explanation Quality:** Evaluates whether DevPilot correctly identifies the suspected root cause file, pinpointed lines, relevant symbols, and generates actionable, coherent explanations and recommendations.
-2. **Empirical Sandbox Verification:** Executes real tests against isolated shadow repository clones under OS-level resource limits (Windows Job Objects & Low-Integrity restrictions) and runtime audit hooks (PEP 578) to empirically verify reproduction, regression boundaries, and patch soundness.
+2. **Empirical Sandbox Verification:** Executes real tests against isolated shadow repository clones under Windows Job Object resource limits and runtime audit hooks (PEP 578) to empirically verify reproduction, regression boundaries, and patch soundness.
 
 ---
 
@@ -38,10 +38,11 @@ To guarantee that the UI and API never misrepresent a flawed patch as verified:
 - **`reproduction_resolved`**: Indicates whether the minimal reproduction test passes after applying the shadow patch.
 - **`regression_suite_passed`**: Indicates whether all preexisting regression tests pass without regression.
 - **`fix_verified`**: Strictly defined as:
-  $$\text{fix\_verified} = \text{reproduction\_confirmed} \land \text{reproduction\_resolved} \land (\text{regression\_suite\_passed} \neq \text{False})$$
-  If a patch resolves the reproduction test but breaks regression tests (such as in `flawed-patch-regression`), `reproduction_resolved` is `True`, but `fix_verified` is strictly `False`.
+  $$\text{fix\_verified} = \text{reproduction\_confirmed} \land \text{reproduction\_resolved} \land (\text{regression\_suite\_passed} = \text{True})$$
+  If a patch resolves the reproduction test but no suite is available or regression tests fail, `reproduction_resolved` is `True`, but `fix_verified` is strictly `False`.
 - **`verification_status`**:
   - `fully_verified`: Both reproduction confirmed and resolved with 100% regression pass.
+  - `regression_suite_missing`: Reproduction resolved, but no existing regression suite was available to complete verification.
   - `regression_failed`: Reproduction resolved, but introduced regressions in preexisting tests.
   - `reproduction_failed`: Test did not reproduce the reported error on the unpatched codebase.
   - `timeout_enforced`: Execution exceeded CPU/wall-clock limit and was killed.
@@ -54,15 +55,15 @@ To guarantee that the UI and API never misrepresent a flawed patch as verified:
 
 Execution occurs in ephemeral shadow workspaces created via `src/devpilot/sandbox.py`. Safeguards operate across two defense tiers:
 
-### Tier 1: OS-Level Enforcement (Windows Job Objects & Low-Integrity Tokens)
+### Tier 1: Windows Job Object Resource Limits
 - **Bounded Lifetime (`JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x2000`):** Every subprocess spawned inside the job object is unconditionally killed when the parent handle closes, preventing orphaned runaway processes.
 - **Memory Caps (`JOB_OBJECT_LIMIT_JOB_MEMORY = 256 MB`):** Strict job-wide commit memory limits prevent denial-of-service via memory exhaustion.
 - **Process Count Caps (`JOB_OBJECT_LIMIT_ACTIVE_PROCESS_LIMIT = 5`):** Restricts fork/process-bomb attacks.
-- **Low Integrity Identity (`S-1-16-4096`):** Child processes run under restricted tokens (`DISABLE_MAX_PRIVILEGE`), denying write privileges outside designated shadow directories.
+- **Fail-closed setup:** Validation is rejected if the Job Object cannot be configured or assigned. DevPilot does not currently create Low Integrity or restricted Windows tokens.
 
 ### Tier 2: Python Runtime Audit Hooks (PEP 578 via `sandbox_runner.py`)
 - **Network Denial:** Audit events `socket.connect`, `socket.bind`, `socket.sendto`, and `socket.getaddrinfo` raise immediate `PermissionError`.
-- **Filesystem Confinement:** Audit events `open`, `os.mkdir`, `os.remove`, `os.rename`, and `shutil` verify targets reside strictly within the ephemeral `shadow_root`. Any write attempt targeting host directories raises `PermissionError`.
+- **Filesystem Confinement:** Audit events permit reads only from the shadow workspace and selected Python runtime roots; writes and filesystem changes must remain in the ephemeral `shadow_root`. Disallowed host access raises `PermissionError`.
 - **Process Spawn Traps:** Traps `subprocess.Popen` and `os.system` invocation.
 - **Dynamic Native Extension Traps:** Traps `ctypes` and native library loading.
 

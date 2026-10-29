@@ -1,0 +1,10 @@
+# DevPilot's local, reviewed validation-worker image.
+# The base is already present locally; build this image explicitly before a
+# worker is allowed to execute project tests.
+FROM forge-sandbox:0.1
+
+USER root
+COPY requirements.txt /opt/devpilot/requirements.txt
+RUN python3 -m pip install --no-cache-dir -r /opt/devpilot/requirements.txt
+USER 10001:10001
+WORKDIR /workspace

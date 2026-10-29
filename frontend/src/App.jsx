@@ -7,8 +7,9 @@ import ReactMarkdown from "react-markdown";
 // Support GitHub-style Markdown, including tables and task lists.
 import remarkGfm from "remark-gfm";
 
-// Centralize the API URL so it can later move into a Vite environment variable.
-const API_BASE_URL = "http://127.0.0.1:8000";
+// By default this is same-origin and goes through Vite's loopback API proxy.
+// An absolute URL is only for an intentionally configured deployment.
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "";
 
 function App() {
   const [page, setPage] = useState("Overview");
@@ -25,6 +26,11 @@ function App() {
 
   const [repoId, setRepoId] = useState("");
   const [description, setDescription] = useState("");
+  const [githubRepositoryId, setGithubRepositoryId] = useState("");
+  const [githubRepositoryName, setGithubRepositoryName] = useState("");
+  const [githubRepositoryUrl, setGithubRepositoryUrl] = useState("");
+  const [githubImporting, setGithubImporting] = useState(false);
+  const [githubImportError, setGithubImportError] = useState("");
 
   // Screenshot selection is currently only a browser-side preview.
   const [image, setImage] = useState(null);
@@ -178,7 +184,7 @@ function App() {
       verification.valid === true &&
       verification.reproduction_confirmed === true &&
       verification.fix_verified === true &&
-      verification.regression_suite_passed !== false;
+      verification.regression_suite_passed === true;
 
     if (isVerified) {
       return (
@@ -192,6 +198,14 @@ function App() {
       return (
         <span className="history-status failed" title="Patch broke existing regression tests">
           ⚠ Regression Failed
+        </span>
+      );
+    }
+
+    if (verification.regression_suite_passed == null && verification.reproduction_resolved === true) {
+      return (
+        <span className="history-status incomplete" title="The reproduction passed, but no complete regression suite was available">
+          Regression Suite Missing
         </span>
       );
     }
@@ -236,6 +250,50 @@ function App() {
   function clearResult() {
     setInvestigationResult(null);
     setInvestigationError("");
+  }
+
+  async function handlePublicGitHubImport(event) {
+    event.preventDefault();
+    setGithubImportError("");
+
+    if (!githubRepositoryId.trim() || !githubRepositoryName.trim() || !githubRepositoryUrl.trim()) {
+      setGithubImportError("Repository ID, display name, and public GitHub URL are required.");
+      return;
+    }
+
+    setGithubImporting(true);
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/repositories/github-public`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          repository_id: githubRepositoryId.trim(),
+          name: githubRepositoryName.trim(),
+          github_url: githubRepositoryUrl.trim(),
+        }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || !data.repository) {
+        throw new Error(
+          typeof data.detail === "string"
+            ? data.detail
+            : `GitHub import failed with HTTP ${response.status}.`
+        );
+      }
+
+      setRepositories((current) => [...current, data.repository]);
+      setRepoId(data.repository.repository_id);
+      setGithubRepositoryId("");
+      setGithubRepositoryName("");
+      setGithubRepositoryUrl("");
+      clearResult();
+    } catch (error) {
+      setGithubImportError(
+        error instanceof Error ? error.message : "Could not import the public GitHub repository."
+      );
+    } finally {
+      setGithubImporting(false);
+    }
   }
 
   function handleImageChange(event) {
@@ -662,15 +720,17 @@ function App() {
                             <span>Fix Verification</span>
                             <strong>
                               {investigationResult.verification.fix_verified
-                                ? "Fix Verified (Passed 0)"
-                                : "Fix Unverified"}
+                                ? "Fix Verified"
+                                : investigationResult.verification.reproduction_resolved
+                                  ? "Reproduction Resolved Only"
+                                  : "Fix Unverified"}
                             </strong>
                           </div>
                           <div className="verification-stat">
                             <span>Regression Suite</span>
                             <strong>
                               {investigationResult.verification.regression_suite_passed === true
-                                ? "All Passed (0 regressions)"
+                                ? "All Passed"
                                 : investigationResult.verification.regression_suite_passed === false
                                   ? "Regression Failed"
                                   : "None configured"}
@@ -819,8 +879,58 @@ function App() {
               <p className="eyebrow">PROJECT ACCESS</p>
               <h1>Repositories</h1>
               <p className="subtitle">
-                View repositories registered in the DevPilot backend.
+                Inspect local repositories or import a public GitHub repository
+                into DevPilot-managed local storage.
               </p>
+
+              <form className="github-import-form" onSubmit={handlePublicGitHubImport}>
+                <p className="field-label">Import public GitHub repository</p>
+                <p className="muted tiny">
+                  Clones a public HTTPS repository locally. It does not store GitHub
+                  credentials, push changes, or open pull requests.
+                </p>
+                <label className="field-label" htmlFor="github-repository-id">
+                  Repository ID
+                </label>
+                <input
+                  id="github-repository-id"
+                  value={githubRepositoryId}
+                  onChange={(event) => setGithubRepositoryId(event.target.value)}
+                  placeholder="example-project"
+                  maxLength="100"
+                  disabled={githubImporting}
+                />
+                <label className="field-label" htmlFor="github-repository-name">
+                  Display name
+                </label>
+                <input
+                  id="github-repository-name"
+                  value={githubRepositoryName}
+                  onChange={(event) => setGithubRepositoryName(event.target.value)}
+                  placeholder="Example Project"
+                  maxLength="200"
+                  disabled={githubImporting}
+                />
+                <label className="field-label" htmlFor="github-repository-url">
+                  Public GitHub HTTPS URL
+                </label>
+                <input
+                  id="github-repository-url"
+                  type="url"
+                  value={githubRepositoryUrl}
+                  onChange={(event) => setGithubRepositoryUrl(event.target.value)}
+                  placeholder="https://github.com/owner/repository"
+                  maxLength="500"
+                  disabled={githubImporting}
+                />
+                {githubImportError && (
+                  <p className="error-message" role="alert">{githubImportError}</p>
+                )}
+                <button className="primary-button" type="submit" disabled={githubImporting}>
+                  {githubImporting ? "Importing..." : "Import public GitHub repo"}
+                  <span>{githubImporting ? "…" : "↗"}</span>
+                </button>
+              </form>
 
               {repositoriesLoading && (
                 <p role="status">Loading repositories...</p>
@@ -853,7 +963,7 @@ function App() {
                     }}
                   >
                     <div className="repository-icon">
-                      {repo.source_type?.toLowerCase() === "github"
+                      {repo.source_type?.toLowerCase().includes("github")
                         ? "GH"
                         : "⌘"}
                     </div>
@@ -974,7 +1084,13 @@ function App() {
                             </div>
                             <div className="verification-stat">
                               <span>Fix Verification</span>
-                              <strong>{item.verification.fix_verified ? "Fix Verified (Passed 0)" : "Fix Unverified"}</strong>
+                              <strong>
+                                {item.verification.fix_verified
+                                  ? "Fix Verified"
+                                  : item.verification.reproduction_resolved
+                                    ? "Reproduction Resolved Only"
+                                    : "Fix Unverified"}
+                              </strong>
                             </div>
                             <div className="verification-stat">
                               <span>Regression Suite</span>

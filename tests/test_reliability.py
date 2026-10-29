@@ -18,7 +18,15 @@ sys.path.insert(0, str(SRC_DIR))
 
 import devpilot.agent as agent
 import devpilot.tools as tools
-from devpilot.api import app, create_investigation, InvestigationRequest
+from devpilot.api import (
+    app,
+    create_investigation,
+    import_public_github_repository,
+    require_api_token,
+    InvestigationRequest,
+    PublicGitHubImportRequest,
+    get_durable_task,
+)
 
 
 @pytest.fixture
@@ -349,6 +357,83 @@ def test_agent_assigns_fallback_id_if_model_returns_empty_id(temp_repo):
 
     assert result["status"] == "completed"
     assert tool_call_no_id.id.startswith("call_")
+
+
+def test_api_token_guard_is_opt_in_and_constant_time(monkeypatch):
+    """LAN protection must reject missing/wrong tokens without affecting local mode."""
+    monkeypatch.setattr("devpilot.api._API_TOKEN", "expected-token")
+    with pytest.raises(Exception) as missing:
+        require_api_token(None)
+    assert getattr(missing.value, "status_code", None) == 401
+
+    with pytest.raises(Exception) as wrong:
+        require_api_token("wrong-token")
+    assert getattr(wrong.value, "status_code", None) == 401
+    assert require_api_token("expected-token") is None
+
+
+def test_public_github_import_endpoint_delegates_to_safe_registry(monkeypatch):
+    """The API exposes only the registry's credential-free public import path."""
+    expected = {
+        "repository_id": "example",
+        "name": "Example",
+        "source_type": "github_public_clone",
+        "status": "connected",
+    }
+    monkeypatch.setattr(
+        "devpilot.api.clone_public_github_repository",
+        lambda repository_id, name, github_url: expected,
+    )
+    result = import_public_github_repository(
+        PublicGitHubImportRequest(
+            repository_id="example",
+            name="Example",
+            github_url="https://github.com/octocat/Hello-World",
+        )
+    )
+    assert result == {"repository": expected}
+
+
+def test_durable_task_endpoint_returns_only_bounded_summary_and_audit(monkeypatch):
+    from datetime import datetime, timezone
+    from devpilot.task_store import DurableTask, TaskAuditEvent
+
+    task = DurableTask("8a7d7a4e-595b-4e7d-9ec8-cc1f8d94899b", "github_pull_request", "R_kgDOExample", "a" * 40, "queued", datetime(2026, 1, 1, tzinfo=timezone.utc))
+    event = TaskAuditEvent(1, "webhook_task_created", {"event_name": "pull_request"}, datetime(2026, 1, 1, tzinfo=timezone.utc))
+
+    class Store:
+        def __init__(self, _url):
+            pass
+        def get_task(self, requested_id):
+            assert requested_id == task.task_id
+            return task
+        def list_task_audit_events(self, requested_id):
+            assert requested_id == task.task_id
+            return [event]
+
+    monkeypatch.setattr("devpilot.api._TASK_DATABASE_URL", "postgresql://configured")
+    monkeypatch.setattr("devpilot.api.PostgresTaskStore", Store)
+    response = get_durable_task(task.task_id)
+    assert response["task"]["task_id"] == task.task_id
+    assert response["audit_events"][0]["event_type"] == "webhook_task_created"
+    assert "event_metadata" not in response["audit_events"][0]
+
+
+def test_durable_task_endpoint_hides_invalid_id_and_storage_details(monkeypatch):
+    from devpilot.task_store import TaskStoreError
+
+    class FailingStore:
+        def __init__(self, _url):
+            pass
+        def get_task(self, _task_id):
+            raise TaskStoreError("internal database path or credential detail")
+
+    monkeypatch.setattr("devpilot.api._TASK_DATABASE_URL", "postgresql://configured")
+    monkeypatch.setattr("devpilot.api.PostgresTaskStore", FailingStore)
+    with pytest.raises(Exception) as error:
+        get_durable_task("not-a-uuid")
+    assert error.value.status_code == 503
+    assert error.value.detail == "Durable task storage is unavailable."
 
 
 def test_api_persists_and_returns_verification(temp_repo):

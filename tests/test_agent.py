@@ -107,3 +107,12 @@ def test_execute_tool_rejects_invalid_json():
 
     with pytest.raises((ValueError, TypeError, KeyError)):
         execute_tool(tool_call, ".")
+
+
+def test_model_configuration_is_checked_at_request_time_not_import_time(monkeypatch):
+    import devpilot.agent as agent
+
+    monkeypatch.setattr(agent, "api_key", None)
+    monkeypatch.setattr(agent, "MODEL", None)
+    with pytest.raises(RuntimeError, match="NVIDIA_API_KEY"):
+        agent._call_model_with_retry({}, [], 0)

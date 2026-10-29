@@ -14,6 +14,14 @@ EXCLUDED_DIRS = {
 MAX_FILE_SIZE = 1_000_000
 MAX_READ_SIZE = 200_000
 
+# Text search is useful across common source repositories. Execution remains
+# Python-only until a language-specific sandboxed runner is added.
+SEARCHABLE_CODE_SUFFIXES = {
+    ".c", ".cc", ".cpp", ".cs", ".go", ".h", ".hpp", ".java", ".js",
+    ".jsx", ".kt", ".kts", ".php", ".py", ".rb", ".rs", ".scala", ".sh",
+    ".sql", ".swift", ".ts", ".tsx", ".vue", ".svelte",
+}
+
 # Common secret/configuration files that must not be exposed to the agent.
 SENSITIVE_NAMES = {
     ".env",
@@ -53,7 +61,7 @@ def _is_sensitive_filename(filename: str) -> bool:
 
 
 def search_code(query: str, repo_root: str = ".") -> str:
-    """Search Python files and return matching lines with verified line numbers."""
+    """Search common text source files and return matching lines with verified line numbers."""
     if not isinstance(query, str) or not query.strip():
         return "Error: search query cannot be empty."
 
@@ -82,12 +90,15 @@ def search_code(query: str, repo_root: str = ".") -> str:
     results = []
     fallback_results = []
 
-    # Search Python source recursively, skipping generated/vendor directories.
-    for file_path in root.rglob("*.py"):
+    # Search common source files recursively, skipping generated/vendor directories.
+    for file_path in root.rglob("*"):
         try:
             relative_path = file_path.relative_to(root)
 
             if _is_excluded(relative_path):
+                continue
+
+            if file_path.suffix.lower() not in SEARCHABLE_CODE_SUFFIXES:
                 continue
 
             # Do not search files whose names indicate sensitive content.
@@ -220,6 +231,7 @@ def run_reproduction_test(
     test_code: str,
     expected_exception: str | None = None,
     repo_root: str = ".",
+    python_executable: str | None = None,
 ) -> dict:
     """
     Run an isolated reproduction test in a shadow workspace (Phase 2).
@@ -243,6 +255,7 @@ def run_reproduction_test(
         repo_root=str(root),
         test_code=test_code,
         expected_exception=expected_exception,
+        python_executable=python_executable,
     )
 
 
@@ -252,6 +265,7 @@ def validate_patch(
     test_code: str,
     expected_exception: str | None = None,
     repo_root: str = ".",
+    python_executable: str | None = None,
 ) -> dict:
     """
     Apply a patch only to a shadow copy and validate it against the reproduction test (Phase 3).
@@ -276,4 +290,5 @@ def validate_patch(
         patched_content=patched_content,
         test_code=test_code,
         expected_exception=expected_exception,
+        python_executable=python_executable,
     )

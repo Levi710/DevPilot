@@ -1,0 +1,31 @@
+services:
+  postgres:
+    # PostgreSQL 16.15 on Alpine 3.24, pinned to the official multi-platform
+    # image index reviewed on 2026-10-29. Update only through a reviewed change.
+    image: postgres:16.15-alpine3.24@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea
+    container_name: devpilot-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: devpilot
+      POSTGRES_USER: devpilot
+      # Compose fails before startup unless this is supplied by the local,
+      # ignored .env file or caller environment.
+      POSTGRES_PASSWORD: ${DEVPILOT_POSTGRES_PASSWORD:?Set DEVPILOT_POSTGRES_PASSWORD in .env}
+    ports:
+      # PostgreSQL is only reachable from this machine. Do not change this to
+      # 0.0.0.0 unless a later reviewed network/TLS design permits it.
+      - "127.0.0.1:${DEVPILOT_POSTGRES_PORT:-55432}:5432"
+    volumes:
+      - devpilot_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U devpilot -d devpilot"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 10s
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  devpilot_postgres_data:
+    name: devpilot_postgres_data

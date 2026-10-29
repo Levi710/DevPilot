@@ -4,3 +4,5 @@ uvicorn[standard]
 openai
 python-dotenv
 pytest
+psycopg[binary]==3.2.13
+PyJWT[crypto]==2.10.1
