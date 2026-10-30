@@ -547,6 +547,257 @@ textarea::placeholder {
   font-size: 16px;
 }
 
+.primary-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  background: #252736 !important;
+  border-color: #383b4d !important;
+  color: #6d7285 !important;
+  box-shadow: none !important;
+  transform: none !important;
+}
+
+.spinner-inline {
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  display: inline-block;
+  vertical-align: middle;
+}
+
+.button-prereq-hint {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  background: #141824;
+  border: 1px solid #252d3f;
+  border-radius: 6px;
+  color: #94a3b8;
+  font-size: 11px;
+  margin-top: 10px;
+}
+
+/* --------------------------------------------------
+ * Live Investigation Progress Tracker & Animations
+ * -------------------------------------------------- */
+.live-tracker-panel {
+  margin-top: 20px;
+  padding: 20px;
+  background: linear-gradient(180deg, #10131e 0%, #0a0c14 100%);
+  border: 1px solid #2b3145;
+  border-radius: 12px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.45);
+  animation: fadeIn 0.3s ease;
+}
+
+.live-tracker-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+
+.live-tracker-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  color: #e2e8f0;
+}
+
+.live-pulse-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #10b981;
+  box-shadow: 0 0 10px #10b981;
+  animation: pulseDot 1.5s infinite;
+}
+
+@keyframes pulseDot {
+  0% { transform: scale(0.95); opacity: 0.8; }
+  50% { transform: scale(1.3); opacity: 1; }
+  100% { transform: scale(0.95); opacity: 0.8; }
+}
+
+.live-agent-badge {
+  font-size: 10px;
+  padding: 3px 8px;
+  background: #1a1e2f;
+  color: #94a3b8;
+  border: 1px solid #2d334a;
+  border-radius: 20px;
+  font-weight: 500;
+}
+
+.live-timer-chip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  background: #171b29;
+  border: 1px solid #282f44;
+  border-radius: 6px;
+  font-size: 11px;
+  color: #cbd5e1;
+}
+
+.live-timer-chip strong {
+  color: #38bdf8;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+}
+
+.live-progress-bar-track {
+  width: 100%;
+  height: 6px;
+  background: #171926;
+  border-radius: 3px;
+  overflow: hidden;
+  margin-bottom: 16px;
+}
+
+.live-progress-bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #6366f1 0%, #38bdf8 50%, #10b981 100%);
+  border-radius: 3px;
+  transition: width 0.6s cubic-bezier(0.16, 1, 0.3, 1);
+  box-shadow: 0 0 12px rgba(56, 189, 248, 0.5);
+}
+
+.live-stages-container {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.live-stage-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: #0f121d;
+  border: 1px solid transparent;
+  transition: all 0.25s ease;
+}
+
+.live-stage-row.active {
+  background: #141828;
+  border-color: #38bdf8;
+  box-shadow: 0 0 14px rgba(56, 189, 248, 0.15);
+}
+
+.live-stage-row.completed {
+  background: #0d131a;
+  border-color: #1a2f26;
+  opacity: 0.85;
+}
+
+.live-stage-row.pending {
+  opacity: 0.45;
+}
+
+.live-stage-status-icon {
+  width: 22px;
+  height: 22px;
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  margin-top: 2px;
+}
+
+.stage-check {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #064e3b;
+  color: #34d399;
+  border: 1px solid #059669;
+  font-size: 11px;
+  display: grid;
+  place-items: center;
+  font-weight: 800;
+}
+
+.stage-spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid #1e293b;
+  border-top-color: #38bdf8;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+.stage-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #334155;
+}
+
+.live-stage-content {
+  flex: 1;
+  min-width: 0;
+}
+
+.live-stage-name-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: #f1f5f9;
+}
+
+.live-stage-emoji {
+  font-size: 14px;
+}
+
+.active-tag {
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  padding: 2px 6px;
+  background: #0369a1;
+  color: #bae6fd;
+  border-radius: 4px;
+  letter-spacing: 0.5px;
+}
+
+.completed-tag {
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  padding: 2px 6px;
+  background: #064e3b;
+  color: #a7f3d0;
+  border-radius: 4px;
+  letter-spacing: 0.5px;
+}
+
+.live-stage-desc {
+  margin: 3px 0 0;
+  font-size: 11px;
+  color: #94a3b8;
+  line-height: 1.4;
+}
+
+.live-tracker-footer {
+  margin-top: 14px;
+  padding-top: 10px;
+  border-top: 1px solid #1e2436;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: #718096;
+}
+
 .demo-notice {
   padding: 13px;
   margin-top: 18px;

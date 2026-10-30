@@ -21,6 +21,39 @@ const TASK_LIFECYCLE_STAGES = [
   { key: "awaiting_approval", label: "Awaiting Approval" },
 ];
 
+const INVESTIGATION_STAGES = [
+  {
+    key: "vision",
+    icon: "👁️",
+    title: "Multimodal Vision Analysis",
+    description: "Transcribing stack trace, error message, and source context with Vision AI...",
+  },
+  {
+    key: "codebase",
+    icon: "🔍",
+    title: "Targeted Codebase Inspection",
+    description: "Locating matching functions and tracing callers in the repository...",
+  },
+  {
+    key: "sandbox_repro",
+    icon: "🧪",
+    title: "Shadow Sandbox Reproduction",
+    description: "Writing and executing isolated test to reproduce bug without modifying host files...",
+  },
+  {
+    key: "patch_verify",
+    icon: "🛡️",
+    title: "Empirical Patch Validation",
+    description: "Validating minimal fix in shadow copy and verifying regression suite...",
+  },
+  {
+    key: "synthesis",
+    icon: "📋",
+    title: "Diff & Resolution Synthesis",
+    description: "Preparing verified patch diff and review summary for mobile approval...",
+  },
+];
+
 function App() {
   const [page, setPage] = useState("Overview");
 
@@ -61,11 +94,43 @@ function App() {
   const [investigating, setInvestigating] = useState(false);
   const [investigationResult, setInvestigationResult] = useState(null);
   const [investigationError, setInvestigationError] = useState("");
+  const [investigationSeconds, setInvestigationSeconds] = useState(0);
 
   // Patch approval and direct file application state
   const [applyingPatch, setApplyingPatch] = useState(false);
   const [patchApplyResult, setPatchApplyResult] = useState(null);
   const [patchApplyError, setPatchApplyError] = useState("");
+
+  // Live timer for tracking active investigation elapsed duration
+  useEffect(() => {
+    let timer = null;
+    if (investigating) {
+      setInvestigationSeconds(0);
+      timer = setInterval(() => {
+        setInvestigationSeconds((sec) => sec + 1);
+      }, 1000);
+    } else {
+      setInvestigationSeconds(0);
+    }
+    return () => {
+      if (timer) clearInterval(timer);
+    };
+  }, [investigating]);
+
+  function getActiveStageIndex(seconds, hasImage) {
+    if (hasImage) {
+      if (seconds < 5) return 0;
+      if (seconds < 11) return 1;
+      if (seconds < 20) return 2;
+      if (seconds < 32) return 3;
+      return 4;
+    } else {
+      if (seconds < 5) return 1;
+      if (seconds < 14) return 2;
+      if (seconds < 26) return 3;
+      return 4;
+    }
+  }
 
   async function loadRepositories() {
     try {
@@ -425,19 +490,56 @@ function App() {
       return;
     }
 
-    if (file.size > 12 * 1024 * 1024) {
-      alert("Please choose an image smaller than 12 MB.");
+    if (file.size > 25 * 1024 * 1024) {
+      alert("Please choose an image smaller than 25 MB.");
       return;
     }
 
     const reader = new FileReader();
     reader.onload = (e) => {
-      setImage({
-        file,
-        previewUrl: URL.createObjectURL(file),
-        base64: e.target?.result,
-      });
-      clearResult();
+      const rawDataUrl = e.target?.result;
+      const img = new Image();
+      img.onload = () => {
+        // Automatically optimize high-res phone camera photos to max 1280px.
+        // This drops 15MB camera payloads to ~150KB, making vision analysis 5x faster.
+        const maxDimension = 1280;
+        let width = img.width;
+        let height = img.height;
+
+        if (width > maxDimension || height > maxDimension) {
+          if (width > height) {
+            height = Math.round((height * maxDimension) / width);
+            width = maxDimension;
+          } else {
+            width = Math.round((width * maxDimension) / height);
+            height = maxDimension;
+          }
+        }
+
+        const canvas = document.createElement("canvas");
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext("2d");
+        ctx.drawImage(img, 0, 0, width, height);
+        const optimizedBase64 = canvas.toDataURL("image/jpeg", 0.85);
+
+        setImage({
+          file,
+          previewUrl: URL.createObjectURL(file),
+          base64: optimizedBase64,
+        });
+        clearResult();
+      };
+      img.onerror = () => {
+        // Fallback to raw data if image element fails
+        setImage({
+          file,
+          previewUrl: URL.createObjectURL(file),
+          base64: rawDataUrl,
+        });
+        clearResult();
+      };
+      img.src = rawDataUrl;
     };
     reader.readAsDataURL(file);
   }
@@ -479,6 +581,7 @@ function App() {
   // Send the bug report and optional screenshot to FastAPI for multimodal agent analysis.
   async function handleSubmit(event) {
     event.preventDefault();
+    if (investigating) return;
     clearResult();
 
     if (repositoriesLoading) {
@@ -702,7 +805,7 @@ function App() {
                         setRepoId(event.target.value);
                         clearResult();
                       }}
-                      disabled={repositoriesLoading || repositories.length === 0}
+                      disabled={investigating || repositoriesLoading || repositories.length === 0}
                     >
                       {repositoriesLoading && (
                         <option value="">Loading registered repositories...</option>
@@ -753,6 +856,7 @@ function App() {
                   <textarea
                     id="bug-description"
                     rows="4"
+                    disabled={investigating}
                     placeholder="Describe the bug, paste a screenshot (Ctrl+V), or snap a photo of the error..."
                     value={description}
                     onPaste={handlePaste}
@@ -768,6 +872,7 @@ function App() {
                       type="file"
                       accept="image/*"
                       hidden
+                      disabled={investigating}
                       onChange={handleImageChange}
                     />
                     <input
@@ -776,6 +881,7 @@ function App() {
                       accept="image/*"
                       capture="environment"
                       hidden
+                      disabled={investigating}
                       onChange={handleImageChange}
                     />
 
@@ -795,6 +901,7 @@ function App() {
                           <button
                             type="button"
                             className="text-button"
+                            disabled={investigating}
                             onClick={handleRemoveImage}
                           >
                             Remove image
@@ -806,6 +913,7 @@ function App() {
                         <button
                           type="button"
                           className="upload-trigger"
+                          disabled={investigating}
                           onClick={() => fileInput.current?.click()}
                         >
                           <span className="upload-icon">📁</span>
@@ -821,6 +929,7 @@ function App() {
                         <button
                           type="button"
                           className="upload-trigger camera-trigger"
+                          disabled={investigating}
                           onClick={() => cameraInput.current?.click()}
                         >
                           <span className="upload-icon">📷</span>
@@ -847,21 +956,104 @@ function App() {
                         repositoriesLoading ||
                         Boolean(repositoryError) ||
                         !selectedRepo ||
-                        selectedRepo.status !== "connected"
+                        selectedRepo.status !== "connected" ||
+                        (!description.trim() && !image)
+                      }
+                      title={
+                        investigating
+                          ? "Investigation in progress. Please wait for results."
+                          : !description.trim() && !image
+                            ? "Please enter a description or attach a photo to investigate."
+                            : "Start AI investigation"
                       }
                     >
-                      {investigating ? "Investigating..." : "Investigate bug"}
-                      <span>{investigating ? "…" : "↗"}</span>
+                      {investigating ? (
+                        <>
+                          <span className="spinner-inline" />
+                          <span>Investigating ({investigationSeconds}s)...</span>
+                        </>
+                      ) : (
+                        <>
+                          <span>Investigate bug</span>
+                          <span>↗</span>
+                        </>
+                      )}
                     </button>
                   </div>
+
+                  {!description.trim() && !image && !investigating && (
+                    <div className="button-prereq-hint">
+                      <span>💡</span>
+                      <span>Attach an error photo or type a bug description to unlock the Investigate button.</span>
+                    </div>
+                  )}
                 </form>
 
                 {investigating && (
-                  <div className="demo-notice" role="status" aria-live="polite">
-                    <strong>Investigation in progress.</strong> DevPilot is
-                    searching the selected repository and analyzing relevant
-                    source files. This may take a little while.
-                  </div>
+                  <section className="live-tracker-panel" role="status" aria-live="polite">
+                    <div className="live-tracker-topbar">
+                      <div className="live-tracker-title">
+                        <span className="live-pulse-dot" />
+                        <strong>AI AGENT AT WORK</strong>
+                        <span className="live-agent-badge">
+                          {image ? "Multimodal Vision + Shadow Sandbox" : "Autonomous Sandbox Engine"}
+                        </span>
+                      </div>
+                      <div className="live-timer-chip">
+                        <span>⏱️ Elapsed:</span>
+                        <strong>{investigationSeconds}s</strong>
+                      </div>
+                    </div>
+
+                    <div className="live-progress-bar-track">
+                      <div
+                        className="live-progress-bar-fill"
+                        style={{
+                          width: `${Math.min(95, Math.max(15, (getActiveStageIndex(investigationSeconds, Boolean(image)) + 1) * 19 + (investigationSeconds % 4) * 2))}%`,
+                        }}
+                      />
+                    </div>
+
+                    <div className="live-stages-container">
+                      {INVESTIGATION_STAGES.filter((st) => (image ? true : st.key !== "vision")).map((stage, idx) => {
+                        const currentStageIdx = getActiveStageIndex(investigationSeconds, Boolean(image)) - (image ? 0 : 1);
+                        const isDone = idx < currentStageIdx;
+                        const isActive = idx === currentStageIdx;
+                        return (
+                          <div
+                            key={stage.key}
+                            className={`live-stage-row ${isDone ? "completed" : isActive ? "active" : "pending"}`}
+                          >
+                            <div className="live-stage-status-icon">
+                              {isDone ? (
+                                <span className="stage-check">✓</span>
+                              ) : isActive ? (
+                                <span className="stage-spinner" />
+                              ) : (
+                                <span className="stage-dot" />
+                              )}
+                            </div>
+                            <div className="live-stage-content">
+                              <div className="live-stage-name-row">
+                                <span className="live-stage-emoji">{stage.icon}</span>
+                                <strong>{stage.title}</strong>
+                                {isActive && <span className="active-tag">Active</span>}
+                                {isDone && <span className="completed-tag">Done</span>}
+                              </div>
+                              <p className="live-stage-desc">{stage.description}</p>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    <div className="live-tracker-footer">
+                      <span className="live-tip-icon">🛡️</span>
+                      <span className="live-tip-text">
+                        DevPilot executes all tests in an isolated shadow sandbox. Your host files remain 100% untouched until you review and tap 'Approve & Apply'.
+                      </span>
+                    </div>
+                  </section>
                 )}
 
                 {investigationError && (

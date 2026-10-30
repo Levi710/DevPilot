@@ -255,6 +255,9 @@ def execute_tool(
         raise ValueError("Tool arguments must be a JSON object.")
 
     if tool_name == "search_code":
+        if set(arguments) != {"query"}:
+            raise ValueError("Invalid arguments for search_code.")
+
         query = arguments.get("query")
         if not isinstance(query, str) or not query.strip():
             raise ValueError("query must be a non-empty string.")
@@ -263,6 +266,10 @@ def execute_tool(
         return search_code(query, repo_root=repo_root)
 
     if tool_name == "read_file":
+        allowed = {"path", "file"}
+        if not set(arguments).issubset(allowed) or not (set(arguments) & allowed):
+            raise ValueError("Invalid arguments for read_file.")
+
         path = arguments.get("path") or arguments.get("file")
         if not isinstance(path, str) or not path.strip():
             raise ValueError("path must be a non-empty string.")
@@ -434,6 +441,7 @@ def extract_error_from_image(image_data: str) -> str:
                 }
             ],
             max_tokens=1024,
+            timeout=90,
         )
     except APIStatusError as exc:
         _log_provider_error(exc)
@@ -481,23 +489,18 @@ def run_investigation(
 
     task_str = str(task).strip() if task is not None else ""
     if screenshot_analysis:
-        if task_str:
-            effective_task = (
-                f"{task_str}\n\n"
-                f"### Uploaded Error Screenshot Details:\n{screenshot_analysis}\n\n"
-                f"INVESTIGATION GOAL:\n"
-                f"Search the repository for the files and functions shown in this error, identify the bug, "
-                f"reproduce it with run_reproduction_test, and call validate_patch with the corrected file contents "
-                f"so the user can review and approve applying the fix directly from their phone."
-            )
-        else:
-            effective_task = (
-                f"The user uploaded a screenshot of an error / bug without a text explanation:\n\n"
-                f"### Uploaded Error Screenshot Details:\n{screenshot_analysis}\n\n"
-                f"INVESTIGATION GOAL:\n"
-                f"Locate the error in the repository, read the relevant file, prove the bug with run_reproduction_test, "
-                f"and call validate_patch with the minimal verified fix so the user can review and approve the patch."
-            )
+        header = f"{task_str}\n\n" if task_str else "The user uploaded a screenshot of an error / bug:\n\n"
+        effective_task = (
+            f"{header}"
+            f"### Uploaded Error Screenshot Details:\n{screenshot_analysis}\n\n"
+            f"INVESTIGATION GOAL & FAST-TRACK DIRECTIVE:\n"
+            f"1. DIRECT FILE ACCESS: The error screenshot details above already identified the relevant file paths and error lines. "
+            f"Do NOT waste iterations performing broad substring searches for symbols already identified in the stack trace. "
+            f"Immediately call read_file on the primary file mentioned in the traceback.\n"
+            f"2. EMPIRICAL REPRODUCTION: In the next iteration, write a minimal reproduction script and call run_reproduction_test.\n"
+            f"3. VERIFIED MINIMAL PATCH: Call validate_patch with the corrected file contents so the user can review and approve applying the fix.\n"
+            f"Focus directly on these concise steps to deliver a prompt, verified resolution."
+        )
     else:
         effective_task = task_str
 
