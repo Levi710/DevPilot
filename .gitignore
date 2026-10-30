@@ -40,8 +40,15 @@ src/devpilot/repositories.json
 src/devpilot/data/repositories/
 src/devpilot/data/worker-staging/
 
-# Generated evaluation output
+# Generated evaluation output (keep source files; ignore run artifacts)
 evaluation/live_results.json
+evaluation/baseline_results.json
+evaluation/engine_results.json
+evaluation/*_investigation_result.json
+
+# Scratch / dev helper scripts
+scratch/
+scratch_check_inv.py
 
 # Local logs
 *.log

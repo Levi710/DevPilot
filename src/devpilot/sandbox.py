@@ -600,7 +600,7 @@ def validate_patch(
     repo_root: str,
     patch_file: str,
     patched_content: str,
-    test_code: str,
+    test_code: str | None = None,
     expected_exception: str | None = None,
     timeout: float = DEFAULT_EXECUTION_TIMEOUT,
     run_regression_tests: bool = True,
@@ -610,11 +610,13 @@ def validate_patch(
     """
     Apply a narrowly scoped patch only to a shadow copy and validate it against the reproduction test (Phase 3).
 
-    1. Runs reproduction test against the unpatched repository (pre-fix baseline).
+    1. Optionally runs reproduction test against the unpatched repository (pre-fix baseline).
     2. Applies patch exclusively in an ephemeral shadow workspace.
-    3. Reruns the exact reproduction test to verify it resolves cleanly.
+    3. Reruns the exact reproduction test to verify it resolves cleanly (if test_code provided).
     4. Runs existing repository regression tests or custom regression test code if provided (Rule 2).
     5. Calculates and captures the exact unified diff.
+
+    If test_code is None, steps 1 and 3 are skipped; only regression tests are run.
     """
     root = Path(repo_root).resolve()
     if not root.is_dir():
@@ -626,12 +628,18 @@ def validate_patch(
     rel_patch_file = Path(patch_file)
     if rel_patch_file.is_absolute():
         try:
-            rel_patch_file = rel_patch_file.relative_to(root)
+            rel_patch_file = rel_patch_file.resolve().relative_to(root)
         except ValueError:
-            return {
-                "valid": False,
-                "reason": "Patch file path must be repository-relative.",
-            }
+            if (root / rel_patch_file.name).is_file():
+                rel_patch_file = Path(rel_patch_file.name)
+            else:
+                return {
+                    "valid": False,
+                    "reason": "Patch file path must be repository-relative.",
+                }
+    else:
+        if not (root / rel_patch_file).is_file() and (root / rel_patch_file.name).is_file():
+            rel_patch_file = Path(rel_patch_file.name)
 
     original_file_path = root / rel_patch_file
     if not original_file_path.is_file():
@@ -653,36 +661,38 @@ def validate_patch(
     )
     unified_diff = "".join(diff_lines)
 
-    # 1. Pre-fix baseline test
-    pre_fix = run_reproduction_test(
-        repo_root=str(root),
-        test_code=test_code,
-        expected_exception=expected_exception,
-        timeout=timeout,
-        python_executable=python_executable,
-    )
+    # 1. Pre-fix baseline test (skipped when no test_code is provided)
+    pre_fix = None
+    if test_code:
+        pre_fix = run_reproduction_test(
+            repo_root=str(root),
+            test_code=test_code,
+            expected_exception=expected_exception,
+            timeout=timeout,
+            python_executable=python_executable,
+        )
 
-    if not pre_fix["reproduced"]:
-        return {
-            "valid": False,
-            "verification_status": "reproduction_failed",
-            "analysis_passed": True,
-            "reproduction_confirmed": False,
-            "fix_verified": False,
-            "reproduction_resolved": False,
-            "regression_suite_passed": None,
-            "reason": (
-                f"Reproduction test failed baseline check: status={pre_fix['status']}. "
-                f"Exception: {pre_fix.get('exception_type') or 'None'}. "
-                "The test must reproduce the targeted bug before a patch can be validated."
-            ),
-            "patched_file": str(rel_patch_file.as_posix()),
-            "diff": unified_diff,
-            "pre_fix": pre_fix,
-            "post_fix": None,
-            "test_code": test_code,
-            "regression_output": "",
-        }
+        if not pre_fix["reproduced"]:
+            return {
+                "valid": False,
+                "verification_status": "reproduction_failed",
+                "analysis_passed": True,
+                "reproduction_confirmed": False,
+                "fix_verified": False,
+                "reproduction_resolved": False,
+                "regression_suite_passed": None,
+                "reason": (
+                    f"Reproduction test failed baseline check: status={pre_fix['status']}. "
+                    f"Exception: {pre_fix.get('exception_type') or 'None'}. "
+                    "The test must reproduce the targeted bug before a patch can be validated."
+                ),
+                "patched_file": str(rel_patch_file.as_posix()),
+                "diff": unified_diff,
+                "pre_fix": pre_fix,
+                "post_fix": None,
+                "test_code": test_code,
+                "regression_output": "",
+            }
 
     # 2. Patch and validate in shadow workspace
     try:
@@ -692,7 +702,7 @@ def validate_patch(
             "valid": False,
             "verification_status": "environment_error",
             "analysis_passed": True,
-            "reproduction_confirmed": bool(pre_fix.get("reproduced")),
+            "reproduction_confirmed": bool(pre_fix.get("reproduced")) if pre_fix else None,
             "fix_verified": False,
             "reproduction_resolved": False,
             "regression_suite_passed": None,
@@ -707,14 +717,17 @@ def validate_patch(
 
     with workspace as shadow:
         shadow.apply_patch(str(rel_patch_file), patched_content)
-        shadow.write_test_file("reproduce_bug.py", test_code)
-        post_fix_res = shadow.execute_script("reproduce_bug.py", timeout=timeout)
 
-        # 3. Check reproduction resolution
-        reproduction_resolved = (
-            post_fix_res.exit_code == 0
-            and post_fix_res.failure_classification == "clean_pass"
-        )
+        # 3. Check reproduction resolution (only when test_code was provided)
+        post_fix_res = None
+        reproduction_resolved = None
+        if test_code:
+            shadow.write_test_file("reproduce_bug.py", test_code)
+            post_fix_res = shadow.execute_script("reproduce_bug.py", timeout=timeout)
+            reproduction_resolved = (
+                post_fix_res.exit_code == 0
+                and post_fix_res.failure_classification == "clean_pass"
+            )
 
         # 4. Run existing regression test suite or custom regression script if requested (Rule 2)
         regression_passed = None
@@ -729,20 +742,24 @@ def validate_patch(
                 exclude_pattern="reproduce_*"
             )
 
-    reproduction_confirmed = bool(pre_fix.get("reproduced"))
-    # reproduction_resolved indicates that the targeted reproduction test passed post-patch
+    reproduction_confirmed = bool(pre_fix.get("reproduced")) if pre_fix else None
+    # reproduction_resolved indicates that the targeted reproduction test passed post-patch.
     # fix_verified strictly requires:
-    # 1. reproduction was confirmed on baseline
-    # 2. reproduction was resolved by the patch
+    # 1. reproduction was confirmed on baseline (or skipped — None when no test_code)
+    # 2. reproduction was resolved by the patch (or skipped — None when no test_code)
     # 3. the complete existing regression test suite passed
-    fix_verified = bool(
-        reproduction_confirmed
-        and reproduction_resolved
-        and regression_passed is True
-    )
+    if test_code:
+        fix_verified = bool(
+            reproduction_confirmed
+            and reproduction_resolved
+            and regression_passed is True
+        )
+    else:
+        # No reproduction test — verified only via regression suite
+        fix_verified = regression_passed is True
 
     # Calculate unambiguous verification state (Requirement 1)
-    if not reproduction_confirmed:
+    if test_code and not reproduction_confirmed:
         verification_status = "reproduction_failed"
     elif regression_passed is False:
         verification_status = "regression_failed"
@@ -753,7 +770,10 @@ def validate_patch(
     else:
         verification_status = "fix_failed"
 
-    is_valid = bool(reproduction_confirmed and fix_verified)
+    if test_code:
+        is_valid = bool(reproduction_confirmed and fix_verified)
+    else:
+        is_valid = fix_verified
 
     return {
         "valid": is_valid,
@@ -767,7 +787,7 @@ def validate_patch(
         "patched_content": patched_content,
         "diff": unified_diff,
         "pre_fix": pre_fix,
-        "post_fix": post_fix_res.to_dict(),
+        "post_fix": post_fix_res.to_dict() if post_fix_res is not None else None,
         "test_code": test_code,
         "regression_output": regression_output,
     }

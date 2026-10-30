@@ -4,6 +4,8 @@
 import json
 import logging
 import os
+from pathlib import Path
+import re
 import time
 
 from dotenv import load_dotenv
@@ -145,15 +147,14 @@ VALIDATE_PATCH_TOOL = {
                 },
                 "test_code": {
                     "type": "string",
-                    "description": "The exact reproduction test script that previously reproduced the bug.",
+                    "description": "Optional: reproduction test script. If omitted, reuses the test_code from run_reproduction_test.",
                 },
                 "expected_exception": {
                     "type": "string",
                     "description": "Expected pre-fix exception name, e.g. 'ZeroDivisionError'.",
                 },
             },
-            "required": ["patch_file", "patched_content", "test_code"],
-            "additionalProperties": False,
+            "required": ["patch_file", "patched_content"],
         },
     },
 }
@@ -274,6 +275,21 @@ def execute_tool(
         if not isinstance(path, str) or not path.strip():
             raise ValueError("path must be a non-empty string.")
 
+        # Normalize path so absolute paths or prefixes extracted from tracebacks are converted to repo-relative
+        root_path = Path(repo_root).resolve()
+        p = Path(path.strip().strip("'\""))
+        if p.is_absolute():
+            try:
+                path = str(p.resolve().relative_to(root_path))
+            except ValueError:
+                if (root_path / p.name).is_file():
+                    path = p.name
+        elif not (root_path / p).is_file() and (root_path / p.name).is_file():
+            path = p.name
+
+        if context is not None:
+            context["last_read_file"] = path
+
         # read_file performs its own path-containment and file-size checks.
         return read_file(path, repo_root=repo_root)
 
@@ -289,26 +305,116 @@ def execute_tool(
         if expected_exc is not None and not isinstance(expected_exc, str):
             raise ValueError("expected_exception must be a string if provided.")
 
-        return run_reproduction_test(
+        rep_result = run_reproduction_test(
             test_code=test_code,
             expected_exception=expected_exc,
             repo_root=repo_root,
             python_executable=python_executable,
         )
 
+        # Extract crashed file from traceback so validate_patch knows the exact file
+        if context is not None and isinstance(rep_result, dict):
+            tb = rep_result.get("traceback") or rep_result.get("stderr") or ""
+            matches = re.findall(r'File\s+["\']([^"\']+\.py)["\']', tb)
+            for fm in reversed(matches):
+                cand = Path(fm).name
+                if (Path(repo_root) / cand).is_file():
+                    context["reproduction_crashed_file"] = cand
+                    break
+
+        return rep_result
+
     if tool_name == "validate_patch":
-        patch_file = arguments.get("patch_file") or arguments.get("file") or arguments.get("path")
+        # Extract patch_file from any common model key name
+        patch_file = (
+            arguments.get("patch_file")
+            or arguments.get("file")
+            or arguments.get("path")
+            or arguments.get("filename")
+            or arguments.get("file_path")
+            or arguments.get("target_file")
+            or arguments.get("target")
+            or arguments.get("module")
+            or arguments.get("script")
+        )
+        if not patch_file and isinstance(arguments.get("patch"), dict):
+            p_dict = arguments["patch"]
+            patch_file = (
+                p_dict.get("patch_file")
+                or p_dict.get("file")
+                or p_dict.get("path")
+                or p_dict.get("filename")
+            )
+
+        # Fallback 1: reproduction crashed file
+        if not patch_file and context and context.get("reproduction_crashed_file"):
+            patch_file = context["reproduction_crashed_file"]
+
+        # Fallback 2: file read earlier in this run
+        if not patch_file and context and context.get("last_read_file"):
+            patch_file = context["last_read_file"]
+
+        # Fallback 3: check if any string value in arguments ends with .py and exists in repo
+        if not patch_file:
+            for val in arguments.values():
+                if isinstance(val, str) and val.strip().endswith(".py"):
+                    cand = Path(val.strip().strip("'\"")).name
+                    if (Path(repo_root) / cand).is_file():
+                        patch_file = cand
+                        break
+
+        # Fallback 4: if repo has only 1 primary .py file, use it
+        if not patch_file:
+            root_path = Path(repo_root).resolve()
+            py_candidates = [
+                f for f in root_path.glob("*.py")
+                if not f.name.startswith("test_") and f.name != "main.py"
+            ]
+            if len(py_candidates) == 1:
+                patch_file = py_candidates[0].name
+
+        # Normalize patch_file path against repo_root
+        if patch_file:
+            pf = Path(str(patch_file).strip().strip("'\""))
+            if pf.is_absolute():
+                try:
+                    patch_file = str(pf.resolve().relative_to(Path(repo_root).resolve()))
+                except ValueError:
+                    patch_file = pf.name
+            elif not (Path(repo_root) / pf).is_file() and (Path(repo_root) / pf.name).is_file():
+                patch_file = pf.name
+            else:
+                patch_file = str(pf)
+
+        # Extract patched_content from any common model key name
         patched_content = (
             arguments.get("patched_content")
             if "patched_content" in arguments
             else arguments.get("content")
             if "content" in arguments
             else arguments.get("patch_content")
+            if "patch_content" in arguments
+            else arguments.get("new_content")
+            if "new_content" in arguments
+            else arguments.get("code")
+            if "code" in arguments
+            else None
         )
+        if patched_content is None and isinstance(arguments.get("patch"), dict):
+            p_dict = arguments["patch"]
+            patched_content = (
+                p_dict.get("patched_content")
+                if "patched_content" in p_dict
+                else p_dict.get("content")
+                if "content" in p_dict
+                else p_dict.get("code")
+            )
+
         test_code = (
             arguments.get("test_code")
             or arguments.get("test")
             or arguments.get("test_script")
+            or arguments.get("reproduction_test")
             or (context.get("last_reproduction_test_code") if context else None)
         )
         expected_exc = arguments.get("expected_exception")
@@ -317,13 +423,12 @@ def execute_tool(
             raise ValueError("validate_patch requires 'patch_file'.")
         if patched_content is None or not isinstance(patched_content, str):
             raise ValueError("validate_patch requires 'patched_content'.")
-        if not test_code or not isinstance(test_code, str) or not test_code.strip():
-            raise ValueError("validate_patch requires 'test_code' (or a preceding run_reproduction_test).")
+        # test_code is optional; if absent, validate_patch skips the reproduction baseline steps.
 
         return validate_patch(
             patch_file=patch_file,
             patched_content=patched_content,
-            test_code=test_code,
+            test_code=test_code if test_code and isinstance(test_code, str) and test_code.strip() else None,
             expected_exception=expected_exc,
             repo_root=repo_root,
             python_executable=python_executable,
@@ -498,7 +603,7 @@ def run_investigation(
             f"Do NOT waste iterations performing broad substring searches for symbols already identified in the stack trace. "
             f"Immediately call read_file on the primary file mentioned in the traceback.\n"
             f"2. EMPIRICAL REPRODUCTION: In the next iteration, write a minimal reproduction script and call run_reproduction_test.\n"
-            f"3. VERIFIED MINIMAL PATCH: Call validate_patch with the corrected file contents so the user can review and approve applying the fix.\n"
+            f"3. VERIFIED MINIMAL PATCH: Call validate_patch with patch_file (e.g. 'calculator.py') and patched_content (the complete corrected file text) so the user can review and approve applying the fix.\n"
             f"Focus directly on these concise steps to deliver a prompt, verified resolution."
         )
     else:
